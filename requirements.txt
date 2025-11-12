@@ -1,0 +1,6 @@
+numpy
+nibabel
+scikit-image
+torch
+matplotlib
+plotly

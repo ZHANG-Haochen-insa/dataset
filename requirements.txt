@@ -4,3 +4,9 @@ scikit-image
 torch
 matplotlib
 plotly
+pandas
+tqdm
+scipy
+jupyter
+jupyterlab
+ipywidgets

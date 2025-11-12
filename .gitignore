@@ -1,0 +1,48 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+
+# Model outputs and training artifacts
+outputs/*.pth
+outputs/*.png
+outputs/*.html
+outputs/*.jpg
+outputs/*.jpeg
+
+# Keep label_map.json and training history
+!outputs/label_map.json
+!outputs/training_history.json
+!outputs/training_history.png
+!outputs/sample_visualization.png
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Large data files (keep structure, ignore actual data)
+s*/ct.nii.gz
+s*/segmentations/*.nii.gz
+
+# Temporary files
+*.tmp
+*.bak
+*.log

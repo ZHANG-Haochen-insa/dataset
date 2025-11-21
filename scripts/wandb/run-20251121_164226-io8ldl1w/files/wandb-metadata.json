@@ -1,0 +1,40 @@
+{
+  "os": "Linux-6.12.43+deb13-amd64-x86_64-with-glibc2.41",
+  "python": "CPython 3.13.9",
+  "startedAt": "2025-11-21T15:42:26.138127Z",
+  "program": "/local/hzhang02/data/dataset/scripts/train_unet_enhanced.py",
+  "codePath": "scripts/train_unet_enhanced.py",
+  "codePathLocal": "train_unet_enhanced.py",
+  "git": {
+    "remote": "https://github.com/ZHANG-Haochen-insa/dataset.git",
+    "commit": "b86a5fc13c47b0705ceab3788923a94678e042f6"
+  },
+  "email": "haochen.zhang@insa-lyon.fr",
+  "root": "/local/hzhang02/data/dataset/scripts",
+  "host": "anchiale10",
+  "executable": "/home/hzhang02/miniconda3/bin/python",
+  "cpu_count": 16,
+  "cpu_count_logical": 32,
+  "gpu": "NVIDIA GeForce RTX 3090 Ti",
+  "gpu_count": 1,
+  "disk": {
+    "/": {
+      "total": "66814095360",
+      "used": "313864192"
+    }
+  },
+  "memory": {
+    "total": "133628190720"
+  },
+  "gpu_nvidia": [
+    {
+      "name": "NVIDIA GeForce RTX 3090 Ti",
+      "memoryTotal": "25757220864",
+      "cudaCores": 10752,
+      "architecture": "Ampere",
+      "uuid": "GPU-dee766c0-fbaa-5b02-ced0-86f0e80eca7a"
+    }
+  ],
+  "cudaVersion": "12.4",
+  "writerId": "jhywxyl623m3bwdaqb5dlz6n5ny6bpnj"
+}

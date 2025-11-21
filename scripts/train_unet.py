@@ -42,6 +42,9 @@ import wandb
 
 import matplotlib.pyplot as plt
 
+# 设置 Weights & Biases API Key（自动登录）
+os.environ['WANDB_API_KEY'] = 'e331d01a3e6f2b0b78c22ffde1e676cb4742f891'
+
 # 设置随机种子
 random.seed(42)
 np.random.seed(42)

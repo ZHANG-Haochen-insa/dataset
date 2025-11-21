@@ -38,9 +38,8 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# Large data files (keep structure, ignore actual data)
-s*/ct.nii.gz
-s*/segmentations/*.nii.gz
+# Ignore all sxxxx directories completely
+s[0-9][0-9][0-9][0-9]/
 
 # Temporary files
 *.tmp

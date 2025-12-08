@@ -45,3 +45,10 @@ s[0-9][0-9][0-9][0-9]/
 *.tmp
 *.bak
 *.log
+
+# Weights & Biases
+wandb/
+**/wandb/
+*.wandb
+**/*.wandb
+scripts/wandb/

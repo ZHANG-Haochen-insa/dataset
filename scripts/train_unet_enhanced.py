@@ -379,6 +379,16 @@ BATCH_SIZE = 16  # 增加到16利用24GB显存（原来是8）
 LEARNING_RATE = 1e-3
 EPOCHS = 20  # 增加训练轮数以获得更好效果
 
+# 早停和阈值配置
+USE_EARLY_STOPPING = True  # 是否启用早停
+EARLY_STOP_PATIENCE = 5  # 容忍多少个epoch验证性能不提升
+EARLY_STOP_MIN_DELTA = 0.001  # 最小改善阈值（小于此值视为无改善）
+
+# 准确率阈值停止配置
+USE_ACCURACY_THRESHOLD = True  # 是否启用准确率阈值停止
+ACCURACY_THRESHOLD = 0.93  # 当验证Dice达到此值时停止训练
+ACCURACY_THRESHOLD_PATIENCE = 2  # 达到阈值后再训练几个epoch确保稳定
+
 # 学习率调度器配置
 USE_SCHEDULER = True  # 是否使用学习率调度器
 SCHEDULER_TYPE = 'cosine'  # 'cosine' 或 'plateau'
@@ -409,7 +419,9 @@ print(f"  数据根目录: {DATA_ROOT}")
 print(f"  输出目录: {OUTPUT_DIR}")
 print(f"  批次大小: {BATCH_SIZE}")
 print(f"  学习率: {LEARNING_RATE}")
-print(f"  训练轮数: {EPOCHS}")
+print(f"  最大训练轮数: {EPOCHS}")
+print(f"  早停机制: {'启用 (Patience=' + str(EARLY_STOP_PATIENCE) + ')' if USE_EARLY_STOPPING else '禁用'}")
+print(f"  准确率阈值停止: {'启用 (Threshold=' + str(ACCURACY_THRESHOLD) + ')' if USE_ACCURACY_THRESHOLD else '禁用'}")
 print(f"  实时监控: {'启用 (Weights & Biases - 增强版)' if USE_WANDB else '禁用'}")
 print("=" * 60)
 
@@ -628,7 +640,15 @@ history = {
     'epoch_time': [],
 }
 
-print(f"\n开始训练 {EPOCHS} 个epoch...\n")
+# 早停相关变量
+best_val_dice = 0.0
+best_epoch = 0
+epochs_no_improve = 0
+epochs_above_threshold = 0
+early_stop_triggered = False
+threshold_stop_triggered = False
+
+print(f"\n开始训练（最多 {EPOCHS} 个epoch）...\n")
 
 for epoch in range(1, EPOCHS + 1):
     epoch_start_time = time.time()
@@ -866,10 +886,67 @@ for epoch in range(1, EPOCHS + 1):
             else:
                 print(f"  学习率保持: {new_lr:.8f}")
 
+    # ========== 早停检查 ==========
+    # 1. 检查是否有改善
+    if avg_val_dice > best_val_dice + EARLY_STOP_MIN_DELTA:
+        best_val_dice = avg_val_dice
+        best_epoch = epoch
+        epochs_no_improve = 0
+        print(f"  ✓ 验证Dice提升！新的最佳: {best_val_dice:.4f}")
+        # 保存最佳模型
+        best_model_path = os.path.join(OUTPUT_DIR, 'best_model.pth')
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'val_dice': avg_val_dice,
+            'val_iou': avg_val_iou,
+        }, best_model_path)
+    else:
+        epochs_no_improve += 1
+        print(f"  验证Dice无改善（已{epochs_no_improve}/{EARLY_STOP_PATIENCE}轮）")
+
+    # 2. 检查准确率阈值
+    if USE_ACCURACY_THRESHOLD and avg_val_dice >= ACCURACY_THRESHOLD:
+        epochs_above_threshold += 1
+        print(f"  ✓ 已达到准确率阈值 {ACCURACY_THRESHOLD:.4f}！({epochs_above_threshold}/{ACCURACY_THRESHOLD_PATIENCE}轮)")
+
+        if epochs_above_threshold >= ACCURACY_THRESHOLD_PATIENCE:
+            threshold_stop_triggered = True
+            print(f"\n{'='*60}")
+            print(f"准确率阈值停止触发！")
+            print(f"  验证Dice已达到 {avg_val_dice:.4f} >= {ACCURACY_THRESHOLD:.4f}")
+            print(f"  并稳定保持了 {ACCURACY_THRESHOLD_PATIENCE} 个epoch")
+            print(f"{'='*60}\n")
+    else:
+        epochs_above_threshold = 0  # 重置计数器
+
+    # 3. 检查早停条件
+    if USE_EARLY_STOPPING and epochs_no_improve >= EARLY_STOP_PATIENCE:
+        early_stop_triggered = True
+        print(f"\n{'='*60}")
+        print(f"早停触发！")
+        print(f"  验证Dice已连续 {EARLY_STOP_PATIENCE} 个epoch无改善")
+        print(f"  最佳验证Dice: {best_val_dice:.4f} (Epoch {best_epoch})")
+        print(f"{'='*60}\n")
+
     print()
+
+    # 如果触发了停止条件，跳出训练循环
+    if early_stop_triggered or threshold_stop_triggered:
+        break
 
 print(f"\n{'='*60}")
 print("训练完成！")
+if early_stop_triggered:
+    print(f"停止原因: 早停机制（{EARLY_STOP_PATIENCE}个epoch无改善）")
+    print(f"实际训练轮数: {len(history['train_loss'])}/{EPOCHS}")
+elif threshold_stop_triggered:
+    print(f"停止原因: 达到准确率阈值 {ACCURACY_THRESHOLD:.4f}")
+    print(f"实际训练轮数: {len(history['train_loss'])}/{EPOCHS}")
+else:
+    print(f"停止原因: 完成所有训练轮数")
+    print(f"实际训练轮数: {len(history['train_loss'])}")
 if USE_WANDB:
     print(f"查看完整训练报告: {wandb.run.get_url()}")
 print(f"{'='*60}")
@@ -879,11 +956,14 @@ print(f"{'='*60}")
 # 11. 训练历史可视化
 # ============================================================================
 
+# 获取实际训练的epoch数
+actual_epochs = len(history['train_loss'])
+
 fig, axes = plt.subplots(2, 3, figsize=(18, 12))
 
 # 1. 训练损失 vs 验证损失
-axes[0, 0].plot(range(1, EPOCHS + 1), history['train_loss'], marker='o', label='Train Loss', linewidth=2)
-axes[0, 0].plot(range(1, EPOCHS + 1), history['val_loss'], marker='s', label='Val Loss', linewidth=2)
+axes[0, 0].plot(range(1, actual_epochs + 1), history['train_loss'], marker='o', label='Train Loss', linewidth=2)
+axes[0, 0].plot(range(1, actual_epochs + 1), history['val_loss'], marker='s', label='Val Loss', linewidth=2)
 axes[0, 0].set_xlabel('Epoch')
 axes[0, 0].set_ylabel('Loss')
 axes[0, 0].set_title('Loss Comparison')
@@ -891,8 +971,8 @@ axes[0, 0].legend()
 axes[0, 0].grid(alpha=0.3)
 
 # 2. 训练Dice vs 验证Dice
-axes[0, 1].plot(range(1, EPOCHS + 1), history['train_dice'], marker='o', label='Train Dice', linewidth=2, color='green')
-axes[0, 1].plot(range(1, EPOCHS + 1), history['val_dice'], marker='s', label='Val Dice', linewidth=2, color='orange')
+axes[0, 1].plot(range(1, actual_epochs + 1), history['train_dice'], marker='o', label='Train Dice', linewidth=2, color='green')
+axes[0, 1].plot(range(1, actual_epochs + 1), history['val_dice'], marker='s', label='Val Dice', linewidth=2, color='orange')
 axes[0, 1].set_xlabel('Epoch')
 axes[0, 1].set_ylabel('Dice Score')
 axes[0, 1].set_title('Dice Score Comparison')
@@ -900,7 +980,7 @@ axes[0, 1].legend()
 axes[0, 1].grid(alpha=0.3)
 
 # 3. 验证IoU
-axes[0, 2].plot(range(1, EPOCHS + 1), history['val_iou'], marker='d', linewidth=2, color='purple')
+axes[0, 2].plot(range(1, actual_epochs + 1), history['val_iou'], marker='d', linewidth=2, color='purple')
 axes[0, 2].set_xlabel('Epoch')
 axes[0, 2].set_ylabel('IoU Score')
 axes[0, 2].set_title('Validation IoU')
@@ -908,7 +988,7 @@ axes[0, 2].grid(alpha=0.3)
 
 # 4. 过拟合分析（Dice差距）
 overfit_gaps = [t - v for t, v in zip(history['train_dice'], history['val_dice'])]
-axes[1, 0].plot(range(1, EPOCHS + 1), overfit_gaps, marker='o', linewidth=2, color='red')
+axes[1, 0].plot(range(1, actual_epochs + 1), overfit_gaps, marker='o', linewidth=2, color='red')
 axes[1, 0].axhline(y=0, color='gray', linestyle='--', alpha=0.5)
 axes[1, 0].axhline(y=0.1, color='orange', linestyle='--', alpha=0.5, label='Overfit threshold')
 axes[1, 0].set_xlabel('Epoch')
@@ -918,14 +998,14 @@ axes[1, 0].legend()
 axes[1, 0].grid(alpha=0.3)
 
 # 5. 梯度范数
-axes[1, 1].plot(range(1, EPOCHS + 1), history['gradient_norm'], marker='o', linewidth=2, color='brown')
+axes[1, 1].plot(range(1, actual_epochs + 1), history['gradient_norm'], marker='o', linewidth=2, color='brown')
 axes[1, 1].set_xlabel('Epoch')
 axes[1, 1].set_ylabel('Gradient Norm')
 axes[1, 1].set_title('Gradient Norm (Stability Check)')
 axes[1, 1].grid(alpha=0.3)
 
 # 6. 学习率变化
-axes[1, 2].plot(range(1, EPOCHS + 1), history['learning_rate'], marker='o', linewidth=2, color='blue')
+axes[1, 2].plot(range(1, actual_epochs + 1), history['learning_rate'], marker='o', linewidth=2, color='blue')
 axes[1, 2].set_xlabel('Epoch')
 axes[1, 2].set_ylabel('Learning Rate')
 axes[1, 2].set_title('Learning Rate Schedule')

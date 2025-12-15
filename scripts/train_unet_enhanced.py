@@ -1,16 +1,23 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-U-Net 2D 医学图像分割模型训练（增强版 - 更多监控指标）
+U-Net 2D 医学图像分割模型训练（肌肉专用版）
 
 本脚本用于训练基于2D U-Net的医学图像分割模型，并支持使用Weights & Biases进行实时监控。
-增强版添加了更多有用的训练监控指标。
+本版本专门针对肌肉组织进行分割。
 
 数据集说明:
 - 数据格式：NIfTI (.nii.gz)
 - 输入：CT扫描图像
-- 输出：117个解剖结构的多通道分割掩码
+- 输出：10种肌肉结构的多通道分割掩码
 - 训练方式：2D轴向切片
+
+目标肌肉结构（10种）:
+- 背部肌群 (autochthon): 左/右
+- 臀大肌 (gluteus_maximus): 左/右
+- 臀中肌 (gluteus_medius): 左/右
+- 臀小肌 (gluteus_minimus): 左/右
+- 髂腰肌 (iliopsoas): 左/右
 
 实时监控:
 本脚本集成了Weights & Biases (wandb)实时监控功能，可以在云端查看训练进度。
@@ -61,7 +68,42 @@ if torch.cuda.is_available():
 
 
 # ============================================================================
-# 2. 数据处理工具函数
+# 2. 肌肉标签定义
+# ============================================================================
+
+# 目标肌肉结构列表（10种肌肉）
+MUSCLE_LABELS = [
+    'autochthon_left.nii.gz',      # 左侧背部肌群
+    'autochthon_right.nii.gz',     # 右侧背部肌群
+    'gluteus_maximus_left.nii.gz', # 左臀大肌
+    'gluteus_maximus_right.nii.gz',# 右臀大肌
+    'gluteus_medius_left.nii.gz',  # 左臀中肌
+    'gluteus_medius_right.nii.gz', # 右臀中肌
+    'gluteus_minimus_left.nii.gz', # 左臀小肌
+    'gluteus_minimus_right.nii.gz',# 右臀小肌
+    'iliopsoas_left.nii.gz',       # 左髂腰肌
+    'iliopsoas_right.nii.gz',      # 右髂腰肌
+]
+
+# 肌肉名称中英法对照
+MUSCLE_NAMES = {
+    'autochthon_left': {'zh': '左侧背部肌群', 'fr': 'Muscles autochtones gauches', 'en': 'Left Autochthon'},
+    'autochthon_right': {'zh': '右侧背部肌群', 'fr': 'Muscles autochtones droits', 'en': 'Right Autochthon'},
+    'gluteus_maximus_left': {'zh': '左臀大肌', 'fr': 'Grand fessier gauche', 'en': 'Left Gluteus Maximus'},
+    'gluteus_maximus_right': {'zh': '右臀大肌', 'fr': 'Grand fessier droit', 'en': 'Right Gluteus Maximus'},
+    'gluteus_medius_left': {'zh': '左臀中肌', 'fr': 'Moyen fessier gauche', 'en': 'Left Gluteus Medius'},
+    'gluteus_medius_right': {'zh': '右臀中肌', 'fr': 'Moyen fessier droit', 'en': 'Right Gluteus Medius'},
+    'gluteus_minimus_left': {'zh': '左臀小肌', 'fr': 'Petit fessier gauche', 'en': 'Left Gluteus Minimus'},
+    'gluteus_minimus_right': {'zh': '右臀小肌', 'fr': 'Petit fessier droit', 'en': 'Right Gluteus Minimus'},
+    'iliopsoas_left': {'zh': '左髂腰肌', 'fr': 'Ilio-psoas gauche', 'en': 'Left Iliopsoas'},
+    'iliopsoas_right': {'zh': '右髂腰肌', 'fr': 'Ilio-psoas droit', 'en': 'Right Iliopsoas'},
+}
+
+print(f"目标肌肉结构数量: {len(MUSCLE_LABELS)}")
+
+
+# ============================================================================
+# 3. 数据处理工具函数
 # ============================================================================
 
 def find_subjects(root: str) -> List[str]:
@@ -78,13 +120,14 @@ def find_subjects(root: str) -> List[str]:
     return [p for p in paths if os.path.isdir(p)]
 
 
-def build_label_map(subjects: List[str], seg_subfolder='segmentations'):
+def build_label_map(subjects: List[str], seg_subfolder='segmentations', muscle_only=True):
     """
     构建标签映射（文件名 -> 通道索引）
 
     Args:
         subjects: 受试者文件夹列表
         seg_subfolder: 分割文件子文件夹名称
+        muscle_only: 是否只保留肌肉标签（默认True）
 
     Returns:
         dict: 标签名到通道索引的映射
@@ -94,24 +137,30 @@ def build_label_map(subjects: List[str], seg_subfolder='segmentations'):
         segdir = os.path.join(s, seg_subfolder)
         if os.path.isdir(segdir):
             for p in glob.glob(os.path.join(segdir, '*.nii*')):
-                names.add(os.path.basename(p))
+                name = os.path.basename(p)
+                # 只保留肌肉标签
+                if muscle_only:
+                    if name in MUSCLE_LABELS:
+                        names.add(name)
+                else:
+                    names.add(name)
     names = sorted(names)
     label_map = {name: idx for idx, name in enumerate(names)}
     return label_map
 
 
-print("数据处理函数定义完成")
+print("数据处理函数定义完成（肌肉专用版）")
 
 
 # ============================================================================
-# 3. 数据集类定义
+# 4. 数据集类定义
 # ============================================================================
 
 class SliceDataset(Dataset):
     """
-    2D切片数据集
+    2D切片数据集（肌肉专用版）
 
-    从3D CT体积中提取2D轴向切片，并加载对应的多通道分割掩码
+    从3D CT体积中提取2D轴向切片，并加载对应的肌肉分割掩码（10个通道）
     """
 
     def __init__(self, subjects: List[str], label_map: dict,
@@ -193,7 +242,7 @@ print("数据集类定义完成")
 
 
 # ============================================================================
-# 4. U-Net模型定义
+# 5. U-Net模型定义
 # ============================================================================
 
 class DoubleConv(nn.Module):
@@ -279,7 +328,7 @@ print("U-Net模型定义完成")
 
 
 # ============================================================================
-# 5. 评估指标（增强版）
+# 6. 评估指标（肌肉专用版）
 # ============================================================================
 
 def dice_score(pred: torch.Tensor, target: torch.Tensor, eps=1e-6):
@@ -368,7 +417,7 @@ print("评估指标函数定义完成")
 
 
 # ============================================================================
-# 6. 数据准备
+# 7. 数据准备
 # ============================================================================
 
 # 基础配置
@@ -402,9 +451,9 @@ PLATEAU_MIN_LR = 1e-6  # 最小学习率
 
 # 实时监控配置
 USE_WANDB = True
-WANDB_PROJECT = 'medical-segmentation-unet'
-WANDB_RUN_NAME = 'unet-2d-training-enhanced'
-WANDB_NOTES = '2D U-Net training with enhanced monitoring metrics'
+WANDB_PROJECT = 'muscle-segmentation-unet'
+WANDB_RUN_NAME = 'unet-2d-muscle-training'
+WANDB_NOTES = '2D U-Net training for muscle segmentation (10 muscle structures)'
 
 # 日志记录频率
 LOG_EVERY_N_BATCHES = 10
@@ -414,15 +463,16 @@ LOG_IMAGES_EVERY_N_EPOCHS = 1
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 print("=" * 60)
-print("配置信息:")
+print("配置信息（肌肉分割专用版）:")
 print(f"  数据根目录: {DATA_ROOT}")
 print(f"  输出目录: {OUTPUT_DIR}")
+print(f"  目标结构: 10种肌肉")
 print(f"  批次大小: {BATCH_SIZE}")
 print(f"  学习率: {LEARNING_RATE}")
 print(f"  最大训练轮数: {EPOCHS}")
 print(f"  早停机制: {'启用 (Patience=' + str(EARLY_STOP_PATIENCE) + ')' if USE_EARLY_STOPPING else '禁用'}")
 print(f"  准确率阈值停止: {'启用 (Threshold=' + str(ACCURACY_THRESHOLD) + ')' if USE_ACCURACY_THRESHOLD else '禁用'}")
-print(f"  实时监控: {'启用 (Weights & Biases - 增强版)' if USE_WANDB else '禁用'}")
+print(f"  实时监控: {'启用 (Weights & Biases - 肌肉专用版)' if USE_WANDB else '禁用'}")
 print("=" * 60)
 
 # 查找受试者，只使用 s0000 到 s0100
@@ -432,9 +482,14 @@ subjects = [os.path.join(DATA_ROOT, s) for s in sorted(all_subjects)]
 
 print(f"\n找到 {len(subjects)} 个受试者")
 
-# 构建标签映射
-label_map = build_label_map(subjects)
-print(f"解剖结构数量: {len(label_map)}")
+# 构建标签映射（只包含肌肉）
+label_map = build_label_map(subjects, muscle_only=True)
+print(f"肌肉结构数量: {len(label_map)}")
+print("目标肌肉列表:")
+for name, idx in label_map.items():
+    muscle_key = name.replace('.nii.gz', '')
+    if muscle_key in MUSCLE_NAMES:
+        print(f"  [{idx}] {MUSCLE_NAMES[muscle_key]['zh']} / {MUSCLE_NAMES[muscle_key]['fr']}")
 
 # 保存标签映射
 label_map_path = os.path.join(OUTPUT_DIR, 'label_map.json')
@@ -488,7 +543,7 @@ print(f"验证批次数量: {len(val_loader)}")
 
 
 # ============================================================================
-# 7. 可视化样本
+# 8. 可视化样本
 # ============================================================================
 
 # 获取一个样本
@@ -528,7 +583,7 @@ print("\n样本可视化已保存")
 
 
 # ============================================================================
-# 8. 创建模型
+# 9. 创建模型
 # ============================================================================
 
 # 创建模型
@@ -581,7 +636,7 @@ print(f"\n模型已创建并移至 {device}")
 
 
 # ============================================================================
-# 9. 初始化 Weights & Biases（增强版）
+# 10. 初始化 Weights & Biases（肌肉专用版）
 # ============================================================================
 
 if USE_WANDB:
@@ -625,7 +680,7 @@ if USE_WANDB:
 
 
 # ============================================================================
-# 10. 训练模型（增强版 - 更多监控指标）
+# 11. 训练模型（肌肉专用版）
 # ============================================================================
 
 # 训练历史记录
@@ -953,7 +1008,7 @@ print(f"{'='*60}")
 
 
 # ============================================================================
-# 11. 训练历史可视化
+# 12. 训练历史可视化
 # ============================================================================
 
 # 获取实际训练的epoch数
@@ -1019,7 +1074,7 @@ print("\n训练历史图已保存（增强版）")
 
 
 # ============================================================================
-# 12. 保存训练历史
+# 13. 保存训练历史
 # ============================================================================
 
 # 保存训练历史为JSON
@@ -1048,7 +1103,7 @@ print("="*60)
 
 
 # ============================================================================
-# 13. 测试推理
+# 14. 测试推理
 # ============================================================================
 
 # 在验证集上测试一个样本
@@ -1107,7 +1162,7 @@ print(f"测试样本Dice系数: {sample_dice:.4f}")
 
 
 # ============================================================================
-# 14. 关闭实时监控
+# 15. 关闭实时监控
 # ============================================================================
 
 if USE_WANDB:
@@ -1120,14 +1175,21 @@ if USE_WANDB:
 # ============================================================================
 
 print("\n" + "="*60)
-print("增强版训练脚本执行完成")
+print("肌肉分割专用版训练脚本执行完成")
 print("\n本脚本的主要特性：")
-print("【监控指标】")
+print("【目标结构】")
+print("  10种肌肉结构：")
+print("  - 背部肌群 (autochthon) 左/右")
+print("  - 臀大肌 (gluteus_maximus) 左/右")
+print("  - 臀中肌 (gluteus_medius) 左/右")
+print("  - 臀小肌 (gluteus_minimus) 左/右")
+print("  - 髂腰肌 (iliopsoas) 左/右")
+print("\n【监控指标】")
 print("1. ✓ 训练Dice - 对比训练集和验证集性能")
 print("2. ✓ 验证Loss - 查看验证集上的损失")
 print("3. ✓ IoU分数 - 另一个常用的分割指标")
 print("4. ✓ 梯度范数 - 判断梯度消失/爆炸")
-print("5. ✓ Top-5和Bottom-5类别Dice - 看哪些器官分割得最好/最差")
+print("5. ✓ 各肌肉类别Dice - 查看每种肌肉的分割效果")
 print("6. ✓ 过拟合指标 - Train Dice - Val Dice的差距")
 print("7. ✓ 学习率变化曲线 - 实时监控学习率调整")
 print("\n【性能优化】")

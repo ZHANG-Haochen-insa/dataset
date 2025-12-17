@@ -1,0 +1,12 @@
+{
+  "autochthon_left.nii.gz": 0,
+  "autochthon_right.nii.gz": 1,
+  "gluteus_maximus_left.nii.gz": 2,
+  "gluteus_maximus_right.nii.gz": 3,
+  "gluteus_medius_left.nii.gz": 4,
+  "gluteus_medius_right.nii.gz": 5,
+  "gluteus_minimus_left.nii.gz": 6,
+  "gluteus_minimus_right.nii.gz": 7,
+  "iliopsoas_left.nii.gz": 8,
+  "iliopsoas_right.nii.gz": 9
+}

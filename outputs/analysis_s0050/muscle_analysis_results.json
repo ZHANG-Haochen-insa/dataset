@@ -1,0 +1,147 @@
+{
+  "ct_path": "/local/hzhang02/data/s0050/ct.nii.gz",
+  "ct_shape": [
+    261,
+    182,
+    399
+  ],
+  "voxel_dims_mm": [
+    1.5,
+    1.5,
+    1.5
+  ],
+  "analysis_time": "2025-12-17 08:26:47",
+  "total_muscle_volume_cm3": 3095.85693359375,
+  "muscles": {
+    "autochthon_left": {
+      "zh_name": "左侧背部肌群",
+      "en_name": "Left Autochthon",
+      "volume_mm3": 504630.0,
+      "volume_cm3": 504.6300048828125,
+      "avg_area_mm2": 1048.037353515625,
+      "max_area_mm2": 2088.0,
+      "slice_range": [
+        0,
+        398
+      ],
+      "num_slices": 321
+    },
+    "autochthon_right": {
+      "zh_name": "右侧背部肌群",
+      "en_name": "Right Autochthon",
+      "volume_mm3": 508811.625,
+      "volume_cm3": 508.8116149902344,
+      "avg_area_mm2": 1060.024169921875,
+      "max_area_mm2": 2004.75,
+      "slice_range": [
+        79,
+        398
+      ],
+      "num_slices": 320
+    },
+    "gluteus_maximus_left": {
+      "zh_name": "左臀大肌",
+      "en_name": "Left Gluteus Maximus",
+      "volume_mm3": 371196.0,
+      "volume_cm3": 371.1960144042969,
+      "avg_area_mm2": 2632.595703125,
+      "max_area_mm2": 3865.5,
+      "slice_range": [
+        0,
+        93
+      ],
+      "num_slices": 94
+    },
+    "gluteus_maximus_right": {
+      "zh_name": "右臀大肌",
+      "en_name": "Right Gluteus Maximus",
+      "volume_mm3": 434720.25,
+      "volume_cm3": 434.7202453613281,
+      "avg_area_mm2": 2734.089599609375,
+      "max_area_mm2": 3766.5,
+      "slice_range": [
+        0,
+        105
+      ],
+      "num_slices": 106
+    },
+    "gluteus_medius_left": {
+      "zh_name": "左臀中肌",
+      "en_name": "Left Gluteus Medius",
+      "volume_mm3": 260772.75,
+      "volume_cm3": 260.7727355957031,
+      "avg_area_mm2": 1829.9842529296875,
+      "max_area_mm2": 2607.75,
+      "slice_range": [
+        25,
+        119
+      ],
+      "num_slices": 95
+    },
+    "gluteus_medius_right": {
+      "zh_name": "右臀中肌",
+      "en_name": "Right Gluteus Medius",
+      "volume_mm3": 290030.625,
+      "volume_cm3": 290.0306396484375,
+      "avg_area_mm2": 1953.0682373046875,
+      "max_area_mm2": 3012.75,
+      "slice_range": [
+        33,
+        131
+      ],
+      "num_slices": 99
+    },
+    "gluteus_minimus_left": {
+      "zh_name": "左臀小肌",
+      "en_name": "Left Gluteus Minimus",
+      "volume_mm3": 56311.875,
+      "volume_cm3": 56.31187438964844,
+      "avg_area_mm2": 636.2923583984375,
+      "max_area_mm2": 843.75,
+      "slice_range": [
+        25,
+        83
+      ],
+      "num_slices": 59
+    },
+    "gluteus_minimus_right": {
+      "zh_name": "右臀小肌",
+      "en_name": "Right Gluteus Minimus",
+      "volume_mm3": 68090.625,
+      "volume_cm3": 68.09062194824219,
+      "avg_area_mm2": 732.1572875976562,
+      "max_area_mm2": 1129.5,
+      "slice_range": [
+        41,
+        102
+      ],
+      "num_slices": 62
+    },
+    "iliopsoas_left": {
+      "zh_name": "左髂腰肌",
+      "en_name": "Left Iliopsoas",
+      "volume_mm3": 301843.125,
+      "volume_cm3": 301.8431396484375,
+      "avg_area_mm2": 1031.9422607421875,
+      "max_area_mm2": 2007.0,
+      "slice_range": [
+        8,
+        202
+      ],
+      "num_slices": 195
+    },
+    "iliopsoas_right": {
+      "zh_name": "右髂腰肌",
+      "en_name": "Right Iliopsoas",
+      "volume_mm3": 299450.25,
+      "volume_cm3": 299.45025634765625,
+      "avg_area_mm2": 1018.5382690429688,
+      "max_area_mm2": 2045.25,
+      "slice_range": [
+        10,
+        205
+      ],
+      "num_slices": 196
+    }
+  }
+}

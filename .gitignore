@@ -10,6 +10,11 @@ __pycache__/
 
 # Model outputs and training artifacts
 outputs/*.pth
+
+# Backup - 只忽略中间检查点，保留最终模型
+outputs_backup/checkpoint_enhanced_epoch[1-9].pth
+outputs_backup/checkpoint_enhanced_epoch1[0-9].pth
+outputs_backup/ct_mesh.html
 outputs/*.png
 outputs/*.html
 outputs/*.jpg

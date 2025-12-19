@@ -23,9 +23,11 @@ plt.rcParams['axes.unicode_minus'] = False
 # 路径设置
 OUTPUT_DIR = '/local/hzhang02/data/dataset/outputs'
 DOCS_DIR = '/local/hzhang02/data/dataset/docs'
+FIGURES_DIR = '/local/hzhang02/data/dataset/docs/figures'
 
-# 创建docs目录（如果不存在）
+# 创建目录（如果不存在）
 os.makedirs(DOCS_DIR, exist_ok=True)
+os.makedirs(FIGURES_DIR, exist_ok=True)
 
 # =============================================================================
 # 1. 加载训练历史数据
@@ -122,8 +124,8 @@ def create_training_curves_chinese():
 
     plt.tight_layout()
 
-    # 保存到docs目录
-    save_path = os.path.join(DOCS_DIR, 'training_curves_chinese.png')
+    # 保存到figures目录
+    save_path = os.path.join(FIGURES_DIR, 'training_curves_chinese.png')
     plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor='white')
     plt.close()
     print(f"训练曲线图已保存: {save_path}")
@@ -227,7 +229,7 @@ def create_training_pipeline_diagram():
 
     plt.tight_layout()
 
-    save_path = os.path.join(DOCS_DIR, 'training_pipeline.png')
+    save_path = os.path.join(FIGURES_DIR, 'training_pipeline.png')
     plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor='white')
     plt.close()
     print(f"训练流程图已保存: {save_path}")
@@ -336,7 +338,7 @@ def create_unet_architecture_diagram():
 
     plt.tight_layout()
 
-    save_path = os.path.join(DOCS_DIR, 'unet_architecture.png')
+    save_path = os.path.join(FIGURES_DIR, 'unet_architecture.png')
     plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor='white')
     plt.close()
     print(f"U-Net架构图已保存: {save_path}")
@@ -382,7 +384,7 @@ def create_muscle_structure_chart():
 
     plt.tight_layout()
 
-    save_path = os.path.join(DOCS_DIR, 'muscle_structures.png')
+    save_path = os.path.join(FIGURES_DIR, 'muscle_structures.png')
     plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor='white')
     plt.close()
     print(f"肌肉结构图已保存: {save_path}")
@@ -457,7 +459,7 @@ def create_training_config_summary():
 
     plt.tight_layout()
 
-    save_path = os.path.join(DOCS_DIR, 'training_config_summary.png')
+    save_path = os.path.join(FIGURES_DIR, 'training_config_summary.png')
     plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor='white')
     plt.close()
     print(f"训练配置摘要图已保存: {save_path}")
@@ -482,5 +484,5 @@ if __name__ == '__main__':
 
     print("\n" + "=" * 60)
     print("所有图表生成完成！")
-    print("保存位置: " + DOCS_DIR)
+    print("保存位置: " + FIGURES_DIR)
     print("=" * 60)

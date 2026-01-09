@@ -426,23 +426,24 @@ OUTPUT_DIR = '/local/hzhang02/data/dataset/outputs'
 TARGET_SHAPE = (256, 256)
 BATCH_SIZE = 16  # 增加到16利用24GB显存（原来是8）
 LEARNING_RATE = 1e-3
-EPOCHS = 20  # 增加训练轮数以获得更好效果
+EPOCHS = 10  # 减少epoch数加快训练
+NUM_SUBJECTS = 50  # 最多使用50个受试者
 
 # 早停和阈值配置
 USE_EARLY_STOPPING = True  # 是否启用早停
-EARLY_STOP_PATIENCE = 5  # 容忍多少个epoch验证性能不提升
+EARLY_STOP_PATIENCE = 3  # 减少patience加快停止
 EARLY_STOP_MIN_DELTA = 0.001  # 最小改善阈值（小于此值视为无改善）
 
 # 准确率阈值停止配置
 USE_ACCURACY_THRESHOLD = True  # 是否启用准确率阈值停止
-ACCURACY_THRESHOLD = 0.93  # 当验证Dice达到此值时停止训练
+ACCURACY_THRESHOLD = 0.85  # 降低阈值加快停止
 ACCURACY_THRESHOLD_PATIENCE = 2  # 达到阈值后再训练几个epoch确保稳定
 
 # 学习率调度器配置
 USE_SCHEDULER = True  # 是否使用学习率调度器
 SCHEDULER_TYPE = 'cosine'  # 'cosine' 或 'plateau'
 # Cosine参数
-COSINE_T_MAX = 20  # 余弦周期（通常等于总epoch数）
+COSINE_T_MAX = 10  # 与EPOCHS匹配
 COSINE_ETA_MIN = 1e-6  # 最小学习率
 # Plateau参数
 PLATEAU_FACTOR = 0.5  # 学习率衰减因子
@@ -475,9 +476,9 @@ print(f"  准确率阈值停止: {'启用 (Threshold=' + str(ACCURACY_THRESHOLD)
 print(f"  实时监控: {'启用 (Weights & Biases - 肌肉专用版)' if USE_WANDB else '禁用'}")
 print("=" * 60)
 
-# 查找受试者，只使用 s0000 到 s0100
+# 查找受试者，只使用前 NUM_SUBJECTS 个
 all_subjects_raw = [d for d in os.listdir(DATA_ROOT) if d.startswith('s') and os.path.isdir(os.path.join(DATA_ROOT, d))]
-all_subjects = [s for s in all_subjects_raw if s in [f's{i:04d}' for i in range(101)]]
+all_subjects = [s for s in all_subjects_raw if s in [f's{i:04d}' for i in range(NUM_SUBJECTS)]]
 subjects = [os.path.join(DATA_ROOT, s) for s in sorted(all_subjects)]
 
 print(f"\n找到 {len(subjects)} 个受试者")

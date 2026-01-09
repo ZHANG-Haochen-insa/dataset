@@ -1,0 +1,108 @@
+{
+  "slices_analyzed": 10,
+  "total_muscle_pixels": 62186,
+  "total_imat_pixels": 390,
+  "average_imat_ratio_percent": 0.6301650017499923,
+  "per_slice_stats": [
+    {
+      "muscle_area_pixels": 4976,
+      "imat_area_pixels": 7,
+      "pure_muscle_area_pixels": 4969,
+      "sat_area_pixels": 4333,
+      "vat_area_pixels": 716,
+      "imat_ratio_percent": 0.14067523181438446,
+      "pure_muscle_ratio_percent": 99.85932922363281,
+      "slice_index": 35
+    },
+    {
+      "muscle_area_pixels": 5313,
+      "imat_area_pixels": 15,
+      "pure_muscle_area_pixels": 5298,
+      "sat_area_pixels": 4413,
+      "vat_area_pixels": 1660,
+      "imat_ratio_percent": 0.2823263704776764,
+      "pure_muscle_ratio_percent": 99.7176742553711,
+      "slice_index": 47
+    },
+    {
+      "muscle_area_pixels": 6054,
+      "imat_area_pixels": 8,
+      "pure_muscle_area_pixels": 6046,
+      "sat_area_pixels": 4617,
+      "vat_area_pixels": 1751,
+      "imat_ratio_percent": 0.132144033908844,
+      "pure_muscle_ratio_percent": 99.86785888671875,
+      "slice_index": 59
+    },
+    {
+      "muscle_area_pixels": 5789,
+      "imat_area_pixels": 5,
+      "pure_muscle_area_pixels": 5784,
+      "sat_area_pixels": 5214,
+      "vat_area_pixels": 1587,
+      "imat_ratio_percent": 0.08637070655822754,
+      "pure_muscle_ratio_percent": 99.91362762451172,
+      "slice_index": 71
+    },
+    {
+      "muscle_area_pixels": 8431,
+      "imat_area_pixels": 14,
+      "pure_muscle_area_pixels": 8417,
+      "sat_area_pixels": 7849,
+      "vat_area_pixels": 3484,
+      "imat_ratio_percent": 0.16605384647846222,
+      "pure_muscle_ratio_percent": 99.83394622802734,
+      "slice_index": 83
+    },
+    {
+      "muscle_area_pixels": 7290,
+      "imat_area_pixels": 40,
+      "pure_muscle_area_pixels": 7250,
+      "sat_area_pixels": 7923,
+      "vat_area_pixels": 4767,
+      "imat_ratio_percent": 0.5486968159675598,
+      "pure_muscle_ratio_percent": 99.45130157470703,
+      "slice_index": 95
+    },
+    {
+      "muscle_area_pixels": 7216,
+      "imat_area_pixels": 82,
+      "pure_muscle_area_pixels": 7134,
+      "sat_area_pixels": 8081,
+      "vat_area_pixels": 3808,
+      "imat_ratio_percent": 1.1363636255264282,
+      "pure_muscle_ratio_percent": 98.86363983154297,
+      "slice_index": 107
+    },
+    {
+      "muscle_area_pixels": 5930,
+      "imat_area_pixels": 32,
+      "pure_muscle_area_pixels": 5898,
+      "sat_area_pixels": 7032,
+      "vat_area_pixels": 2895,
+      "imat_ratio_percent": 0.5396290421485901,
+      "pure_muscle_ratio_percent": 99.46037292480469,
+      "slice_index": 119
+    },
+    {
+      "muscle_area_pixels": 6396,
+      "imat_area_pixels": 121,
+      "pure_muscle_area_pixels": 6275,
+      "sat_area_pixels": 6880,
+      "vat_area_pixels": 1966,
+      "imat_ratio_percent": 1.8918074369430542,
+      "pure_muscle_ratio_percent": 98.10819244384766,
+      "slice_index": 131
+    },
+    {
+      "muscle_area_pixels": 4791,
+      "imat_area_pixels": 66,
+      "pure_muscle_area_pixels": 4725,
+      "sat_area_pixels": 5771,
+      "vat_area_pixels": 1223,
+      "imat_ratio_percent": 1.3775829076766968,
+      "pure_muscle_ratio_percent": 98.62242126464844,
+      "slice_index": 143
+    }
+  ]
+}

@@ -883,7 +883,7 @@ def main():
     print("=" * 60)
 
     DATA_ROOT = '/local/hzhang02/data'
-    OUTPUT_DIR = '/local/hzhang02/data/dataset/outputs_muscle_transfer_v4'
+    OUTPUT_DIR = '/local/hzhang02/data/dataset/outputs_v4'
     TARGET_SHAPE = (256, 256)
     NUM_SUBJECTS = 50
 

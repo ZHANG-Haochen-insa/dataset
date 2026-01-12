@@ -28,6 +28,12 @@ outputs_muscle_transfer_v2/checkpoint_*.pth
 outputs_muscle_transfer_v3/checkpoint_*.pth
 !outputs_muscle_transfer_v3/best_model.pth
 
+# Muscle transfer learning V4 (attention-based)
+outputs_v4/checkpoint_*.pth
+!outputs_v4/best_model.pth
+outputs_v4/*.png
+!outputs_v4/training_history.png
+
 # Backup - 只忽略中间检查点，保留最终模型
 outputs_backup/checkpoint_enhanced_epoch[1-9].pth
 outputs_backup/checkpoint_enhanced_epoch1[0-9].pth

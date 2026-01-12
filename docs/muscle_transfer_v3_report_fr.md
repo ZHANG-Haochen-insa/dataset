@@ -1,166 +1,159 @@
-# Rapport de Modification - Apprentissage par Transfert Musculaire V3
+# Rapport Technique - Apprentissage par Transfert Musculaire V3
 
 ## Apercu
 
-Ce rapport documente le processus complet de mise a niveau de la version V2 vers la version V3 avec l'approche "Expansion puis Affinage", incluant l'analyse des problemes, la conception et l'implementation.
+La version V3 adopte l'approche "Expansion puis Affinage" (Expand then Refine) pour resoudre le probleme de la version V2 ou le modele etait trop conservateur avec une couverture insuffisante. L'idee centrale est d'utiliser d'abord la plage de valeurs HU pour une segmentation grossiere afin d'obtenir un rappel eleve, puis d'apprendre a affiner les contours en utilisant les regions musculaires deja etiquetees comme reference.
 
 ## Contexte et Problematique
 
 ### Limitations de la Version V2
 
-La version V2 de l'apprentissage par transfert a obtenu de bons indicateurs sur l'ensemble de validation (conformite HU 99.5%, Dice 0.80), mais l'analyse pratique a revele un probleme fondamental :
+La version V2 a obtenu de bons indicateurs sur l'ensemble de validation (conformite HU 99.5%, Dice 0.80), mais l'analyse pratique a revele un probleme fondamental :
 
-**Modele trop conservateur** : La zone musculaire predite par le modele etait insuffisante en termes de couverture. Meme les regions musculaires deja etiquetees dans les echantillons d'entrainement n'etaient pas entierement couvertes. Cela va a l'encontre de notre objectif final : decouvrir et segmenter tous les tissus musculaires.
+**Modele trop conservateur** : La zone musculaire predite par le modele etait insuffisante en termes de couverture. Meme les regions musculaires deja etiquetees n'etaient pas entierement couvertes.
 
-### Besoins de l'Utilisateur
-
-L'utilisateur a clairement indique que le modele devrait :
-1. **Couvrir davantage de regions musculaires**, sans se limiter aux parties deja etiquetees
-2. Determiner d'abord toutes les zones candidates par la plage de valeurs HU
-3. Puis ajuster precisement les contours par alignement avec les etiquettes connues
-
-## Conception : Methode "Expansion puis Affinage"
+## Conception de la Methode
 
 ### Concept Fondamental
 
 ```
-Expansion : Couvrir tous les pixels dont les valeurs HU sont dans la plage musculaire (rappel eleve)
-Affinage : Ajuster les contours par alignement avec les etiquettes connues (precision elevee)
+Expansion : Segmentation grossiere par plage HU → Couvrir toutes les regions potentiellement musculaires (rappel eleve)
+↓
+Affinage : Reference aux etiquettes musculaires connues → Apprendre a affiner les contours
 ```
 
-### Comparaison des Methodes
+### Conception de la Fonction de Perte
 
-| Caracteristique | Version V2 | Version V3 |
-|-----------------|------------|------------|
-| Canaux d'entree | 2 (CT + etiquettes connues) | 4 (CT + segmentation HU grossiere + etiquettes connues + zone non-exclue) |
-| Conception des pertes | BCE + conformite HU + Dice | Alignement des etiquettes + recompense de couverture + penalite d'exclusion |
-| Objectif | Correspondance precise avec les etiquettes connues | Maximiser la couverture tout en maintenant la precision des contours |
-| Direction d'optimisation | Priorite a la precision | Priorite au rappel, contours precis |
+La V3 utilise une nouvelle fonction de perte `ExpandThenRefireLoss` comprenant cinq composantes :
 
-## Modifications Detaillees
+| Composante de perte | Poids | Fonction |
+|---------------------|-------|----------|
+| Alignement des etiquettes (label_alignment) | 3.0 | Les regions etiquetees doivent correspondre precisement aux etiquettes |
+| Recompense de couverture (coverage_reward) | 1.0 | Encourager la couverture des regions HU valides non etiquetees |
+| Contrainte d'exclusion (exclusion) | 5.0 | Exclusion forcee des regions air/os |
+| Penalite hors plage HU (hu_violation) | 1.0 | Penalite legere pour les predictions hors plage HU |
+| Lissage des contours (smoothness) | 0.2 | Maintenir des contours de prediction lisses |
 
-### 1. Conception des Entrees (4 canaux)
+### Architecture du Reseau
 
-```python
-input_tensor = np.stack([
-    ct_resized,           # Canal 0: Image CT (normalisee)
-    hu_coarse,            # Canal 1: Segmentation HU grossiere (tous les pixels HU dans -29~150)
-    muscle_resized,       # Canal 2: Etiquettes musculaires connues
-    1 - exclusion         # Canal 3: Masque de zone non-exclue
-], axis=0)
-```
+Utilisation de `MuscleRefineNet`, base sur l'architecture U-Net :
 
-**Raisons de conception** :
-- `hu_coarse` fournit les zones candidates physiques pour les muscles, indiquant au modele "ces pixels pourraient physiquement etre des muscles"
-- `muscle_resized` fournit les etiquettes correctes connues pour l'apprentissage des contours
-- `1 - exclusion` marque clairement les zones qui ne peuvent pas etre des muscles (air, os)
+- **Nombre de canaux d'entree** : 4
+  - Canal 0 : Image CT (normalisee)
+  - Canal 1 : Segmentation HU grossiere (region candidate)
+  - Canal 2 : Etiquettes musculaires connues (reference)
+  - Canal 3 : Masque de region non-exclue
+- **Canaux de feature maps** : [32, 64, 128, 256]
+- **Couche goulot** : 512 canaux
+- **Dropout** : Encodeur 0.1, goulot 0.2
 
-### 2. Conception de la Fonction de Perte
+## Configuration des Hyperparametres
 
-```python
-class ExpandThenRefireLoss(nn.Module):
-    """
-    Fonction de perte Expansion puis Affinage
+### Parametres d'Entrainement
 
-    Objectifs :
-    1. Correspondance precise dans les regions etiquetees (poids eleve)
-    2. Encourager la couverture dans les regions HU valides non etiquetees (recompense de couverture)
-    3. Exclure strictement les regions d'air et d'os
-    """
-```
+| Parametre | Valeur |
+|-----------|--------|
+| Taux d'apprentissage (Learning Rate) | 1e-4 |
+| Decroissance des poids (Weight Decay) | 1e-5 |
+| Taille de lot (Batch Size) | 16 |
+| Nombre d'epoques (Epochs) | 30 |
+| Optimiseur | AdamW |
+| Planification du taux d'apprentissage | CosineAnnealingLR |
 
-#### Composition des Pertes
+### Contraintes de Valeurs HU
 
-| Terme de perte | Poids | Fonction |
-|----------------|-------|----------|
-| label_alignment | 3.0 | Assurer l'alignement precis avec les etiquettes musculaires connues |
-| coverage_reward | 1.0 | Encourager la couverture des regions HU valides non etiquetees |
-| exclusion | 5.0 | Penaliser strictement les predictions erronees sur l'air/os |
+| Parametre | Valeur HU | Description |
+|-----------|-----------|-------------|
+| Limite inferieure HU muscle | -29 | Valeur HU minimale du tissu musculaire |
+| Limite superieure HU muscle | 150 | Valeur HU maximale du tissu musculaire |
+| Seuil air | -200 | En dessous = air, exclusion forcee |
+| Seuil os | 300 | Au dessus = os, exclusion forcee |
+| Seuil corps | -500 | En dessous = arriere-plan |
 
-#### Logique du Code Cle
+### Configuration des Donnees
 
-```python
-# 1. Perte d'alignement des regions etiquetees - poids eleve pour la precision
-label_region_loss = (bce_all * has_label).sum() / (has_label.sum() + 1e-6)
-losses['label_alignment'] = label_region_loss * 3.0
+- **Nombre de sujets** : 50
+- **Taille d'image cible** : 256×256
+- **Filtrage abdominal** : Active (exclusion de la region des cuisses)
+- **Ratio entrainement/validation** : 80%/20%
 
-# 2. Recompense de couverture - encourager la couverture des regions HU valides non etiquetees
-unlabeled_hu_valid = hu_coarse * (1 - has_label) * body_mask * (1 - exclusion_mask)
-coverage_loss = ((1 - pred_prob) * unlabeled_hu_valid).mean()
-losses['coverage_reward'] = coverage_loss * 1.0
+## Resultats d'Entrainement
 
-# 3. Perte d'exclusion - interdiction absolue de predire l'air/os
-exclusion_loss = (pred_prob * exclusion_mask).mean()
-losses['exclusion'] = exclusion_loss * 5.0
-```
+### Metriques Finales
 
-### 3. Configuration d'Entrainement
+| Metrique | Valeur finale | Description |
+|----------|---------------|-------------|
+| Rappel des etiquettes | 100% | Muscles etiquetes entierement couverts |
+| Dice des etiquettes | 31.4% | Chevauchement avec les etiquettes |
+| Couverture HU | 99.99% | Degre de couverture des regions HU valides |
+| Debordement d'exclusion | 0.0046% | Proportion de prediction dans les zones exclues |
+| Ratio d'expansion | 11.7x | Expansion de la zone predite par rapport aux etiquettes |
 
-```python
-# Hyperparametres
-BATCH_SIZE = 16
-LEARNING_RATE = 1e-4
-NUM_EPOCHS = 30
-IMAGE_SIZE = 256
+### Convergence des Pertes
 
-# Plage HU
-HU_MIN = -29
-HU_MAX = 150
+- Perte d'entrainement : de 0.907 a 0.024
+- Perte de validation : de 0.672 a 0.025
 
-# Seuils d'exclusion
-AIR_THRESHOLD = -200
-BONE_THRESHOLD = 300
+### Courbes d'Entrainement
 
-# Poids des pertes
-LABEL_ALIGNMENT_WEIGHT = 3.0
-COVERAGE_REWARD_WEIGHT = 1.0
-EXCLUSION_WEIGHT = 5.0
-```
+![Courbes d'entrainement](v3_training_history.png)
 
-### 4. Filtrage Abdominal
+Les courbes d'entrainement montrent :
+1. **Courbe de perte** : Les pertes d'entrainement et de validation convergent rapidement et se stabilisent
+2. **Rappel des etiquettes** : Proche de 100% des la premiere epoque
+3. **Dice des etiquettes** : Stable autour de 31%, refletant l'intention de la strategie d'expansion
+4. **Couverture HU** : Atteint rapidement et maintient plus de 99%
+5. **Debordement d'exclusion** : Reste constamment a un niveau tres bas
+6. **Ratio d'expansion** : Stable autour de 11.7 fois
 
-La logique de filtrage abdominal de V2 a ete conservee, ne traitant que les coupes de la region abdominale (excluant les cuisses) :
+### Visualisation des Predictions
 
-```python
-# Determination de la region abdominale par marqueurs anatomiques
-abdominal_organs = [1, 2, 3, 5, 6]  # Rate, reins, foie, etc.
-thigh_bones = [74, 76]  # Femurs gauche et droit
+![Visualisation des predictions](v3_visualization_epoch30.png)
 
-is_abdominal = any(organ in labels for organ in abdominal_organs)
-has_thigh = any(bone in labels for bone in thigh_bones)
+Explication de la visualisation (de gauche a droite) :
+1. **CT Image** : Image CT originale
+2. **HU Coarse (Candidate)** : Zone candidate de segmentation HU grossiere (vert)
+3. **Known Labels** : Etiquettes musculaires connues (rouge)
+4. **Prediction** : Resultat de prediction du modele (bleu)
+5. **R:Miss G:New B:Match** : Rouge=manque, Vert=nouvelle couverture, Bleu=correspondance correcte
+6. **R:Missed G:Good B:Bad** : Rouge=HU valide mais non predit, Vert=HU valide et predit, Bleu=HU invalide mais predit
 
-# Conserver les coupes abdominales, exclure les coupes de cuisse
-keep_slice = is_abdominal and not has_thigh
-```
+## Analyse des Resultats
 
-## Modifications de Fichiers
+### Avantages
 
-| Fichier | Operation | Description |
-|---------|-----------|-------------|
-| `scripts/train_muscle_transfer_v3.py` | Nouveau | Implementation complete de la methode V3 "Expansion puis Affinage" |
-| `.gitignore` | Modifie | Ajout des regles pour `outputs_muscle_transfer_v3/` |
-| `outputs_muscle_transfer_v3/` | Nouveau | Repertoire de sortie pour l'entrainement V3 |
+1. **Rappel eleve** : 100% de couverture des regions musculaires etiquetees
+2. **Forte couverture HU** : Couverture quasi totale de toutes les regions HU valides
+3. **Faible debordement d'exclusion** : Tres peu de predictions dans les zones os/air
+4. **Entrainement stable** : Convergence fluide des pertes, sans oscillation
 
-## Etat de l'Entrainement
+### Problemes et Reflexions
 
-- **Heure de demarrage** : 2026-01-11 01:08
-- **PID du processus** : 2333264
-- **Donnees d'entrainement** : 6 352 coupes abdominales (30 sujets)
-- **Donnees de validation** : 2 119 coupes abdominales (8 sujets)
-- **Lien WandB** : https://wandb.ai/haochen-zhang-insa-lyon/muscle-transfer-learning/runs/ok1dch31
+1. **Dice faible** : Le score Dice d'environ 31% reflete la sur-expansion due a la strategie "expansion d'abord"
+2. **Ratio d'expansion eleve** : Une expansion de 11.7 fois signifie que la zone predite est bien plus grande que les etiquettes reelles
+3. **Precision des contours** : Bien que la couverture soit elevee, la precision des contours reste a ameliorer
 
-## Effets Attendus
+### Comparaison avec V2
 
-1. **Rappel plus eleve** : Le modele devrait couvrir davantage de regions musculaires
-2. **Maintien de la precision des contours** : Grace a la perte label_alignment, les contours des regions connues devraient rester precis
-3. **Eviter les faux positifs** : La perte d'exclusion garantit que l'air et les os ne seront pas mal classifies
+| Caracteristique | V2 | V3 |
+|-----------------|-----|-----|
+| Strategie | Prediction conservatrice | Couverture aggressive |
+| Rappel | Faible | 100% |
+| Dice | ~80% | ~31% |
+| Ratio d'expansion | <1x | 11.7x |
+| Probleme de sous-detection | Severe | Resolu |
+| Sur-segmentation | Non | Presente |
 
-## Directions d'Amelioration Futures
+## Conclusion
 
-1. Si la couverture reste insuffisante, augmenter `COVERAGE_REWARD_WEIGHT`
-2. Si les contours ne sont pas assez precis, augmenter `LABEL_ALIGNMENT_WEIGHT`
-3. Envisager d'ajouter des contraintes de connectivite pour eviter les petites regions isolees
+La version V3 a reussi a resoudre le probleme de sous-detection de V2, atteignant un rappel de 100% des etiquettes. La conception "expansion puis affinage" permet au modele de couvrir toutes les regions musculaires potentielles. Cependant, la version actuelle a des capacites limitees d'affinage des contours dans la phase "affinage", conduisant a un ratio d'expansion eleve.
+
+Directions d'amelioration futures :
+1. Renforcer le poids de la perte d'alignement des contours
+2. Introduire un post-traitement morphologique
+3. Ajouter un module de detection des contours
+4. Strategie d'entrainement multi-etapes
 
 ---
 
-*Date de generation du rapport : 2026-01-11*
+*Date de generation du rapport : 2026-01-12*

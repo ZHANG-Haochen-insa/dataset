@@ -153,16 +153,17 @@ class PositionalEncoding2D(nn.Module):
 
 class MultiHeadSelfAttention2D(nn.Module):
     """
-    2D多头自注意力模块
+    2D多头自注意力模块 - 使用下采样减少显存
 
-    让特征图中的每个位置都能关注其他所有位置
+    先下采样到较小分辨率做注意力，再上采样回来
     """
 
-    def __init__(self, channels, num_heads=8, dropout=0.1):
+    def __init__(self, channels, num_heads=8, dropout=0.1, downsample_factor=4):
         super().__init__()
         self.channels = channels
         self.num_heads = num_heads
         self.head_dim = channels // num_heads
+        self.downsample_factor = downsample_factor
 
         assert channels % num_heads == 0, "channels must be divisible by num_heads"
 
@@ -177,14 +178,19 @@ class MultiHeadSelfAttention2D(nn.Module):
 
     def forward(self, x):
         B, C, H, W = x.shape
-        N = H * W
 
         # 残差连接
         identity = x
         x = self.norm(x)
 
+        # 下采样以减少显存
+        H_down = H // self.downsample_factor
+        W_down = W // self.downsample_factor
+        x_down = F.adaptive_avg_pool2d(x, (H_down, W_down))
+        N = H_down * W_down
+
         # 生成Q, K, V
-        qkv = self.qkv(x)  # (B, 3C, H, W)
+        qkv = self.qkv(x_down)  # (B, 3C, H_down, W_down)
         qkv = qkv.reshape(B, 3, self.num_heads, self.head_dim, N)
         qkv = qkv.permute(1, 0, 2, 4, 3)  # (3, B, heads, N, head_dim)
         q, k, v = qkv[0], qkv[1], qkv[2]
@@ -196,28 +202,30 @@ class MultiHeadSelfAttention2D(nn.Module):
 
         # 输出
         out = attn @ v  # (B, heads, N, head_dim)
-        out = out.transpose(2, 3).reshape(B, C, H, W)
+        out = out.permute(0, 1, 3, 2).reshape(B, C, H_down, W_down)
         out = self.proj(out)
+
+        # 上采样回原分辨率
+        out = F.interpolate(out, size=(H, W), mode='bilinear', align_corners=True)
 
         return identity + out
 
 
 class CrossRegionAttention(nn.Module):
     """
-    跨区域注意力模块
+    跨区域注意力模块 - 使用下采样减少显存
 
     核心思想：以已标注肌肉区域为参考（Query来源），
     去关注所有位置（Key/Value来源），找到特征相似的区域
-
-    这样网络就能学习到"什么样的特征代表肌肉"
     """
 
-    def __init__(self, channels, num_heads=8, dropout=0.1):
+    def __init__(self, channels, num_heads=4, dropout=0.1, downsample_factor=4):
         super().__init__()
         self.channels = channels
         self.num_heads = num_heads
         self.head_dim = channels // num_heads
         self.scale = self.head_dim ** -0.5
+        self.downsample_factor = downsample_factor
 
         # 分开的Q和KV投影
         self.q_proj = nn.Conv2d(channels, channels, 1)
@@ -236,38 +244,49 @@ class CrossRegionAttention(nn.Module):
             reference_mask: 已知肌肉区域mask (B, 1, H, W)，用于加权
         """
         B, C, H, W = query_features.shape
-        N = H * W
+
+        # 下采样
+        H_down = max(H // self.downsample_factor, 8)
+        W_down = max(W // self.downsample_factor, 8)
 
         # 归一化
         q_norm = self.norm_q(query_features)
         kv_norm = self.norm_kv(context_features)
 
-        # 生成Q (从query_features)
-        q = self.q_proj(q_norm)  # (B, C, H, W)
-        q = q.reshape(B, self.num_heads, self.head_dim, N).permute(0, 1, 3, 2)  # (B, heads, N, head_dim)
+        # 下采样
+        q_down = F.adaptive_avg_pool2d(q_norm, (H_down, W_down))
+        kv_down = F.adaptive_avg_pool2d(kv_norm, (H_down, W_down))
+        N = H_down * W_down
 
-        # 生成K, V (从context_features)
-        kv = self.kv_proj(kv_norm)  # (B, 2C, H, W)
+        # 生成Q
+        q = self.q_proj(q_down)  # (B, C, H_down, W_down)
+        q = q.reshape(B, self.num_heads, self.head_dim, N).permute(0, 1, 3, 2)
+
+        # 生成K, V
+        kv = self.kv_proj(kv_down)  # (B, 2C, H_down, W_down)
         kv = kv.reshape(B, 2, self.num_heads, self.head_dim, N)
-        k = kv[:, 0].permute(0, 1, 3, 2)  # (B, heads, N, head_dim)
-        v = kv[:, 1].permute(0, 1, 3, 2)  # (B, heads, N, head_dim)
+        k = kv[:, 0].permute(0, 1, 3, 2)
+        v = kv[:, 1].permute(0, 1, 3, 2)
 
         # 注意力计算
-        attn = (q @ k.transpose(-2, -1)) * self.scale  # (B, heads, N, N)
+        attn = (q @ k.transpose(-2, -1)) * self.scale
 
         # 如果有参考mask，加权已标注区域的重要性
         if reference_mask is not None:
-            ref_flat = reference_mask.reshape(B, 1, 1, N)  # (B, 1, 1, N)
-            # 增强对已标注区域的注意力
-            attn = attn + ref_flat * 2.0  # 已标注区域的Key更重要
+            ref_down = F.adaptive_avg_pool2d(reference_mask, (H_down, W_down))
+            ref_flat = ref_down.reshape(B, 1, 1, N)
+            attn = attn + ref_flat * 2.0
 
         attn = attn.softmax(dim=-1)
         attn = self.dropout(attn)
 
         # 输出
-        out = attn @ v  # (B, heads, N, head_dim)
-        out = out.permute(0, 1, 3, 2).reshape(B, C, H, W)
+        out = attn @ v
+        out = out.permute(0, 1, 3, 2).reshape(B, C, H_down, W_down)
         out = self.out_proj(out)
+
+        # 上采样回原分辨率
+        out = F.interpolate(out, size=(H, W), mode='bilinear', align_corners=True)
 
         return query_features + out, attn
 

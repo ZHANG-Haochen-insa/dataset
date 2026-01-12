@@ -52,6 +52,7 @@ from torch.distributions import Bernoulli
 from tqdm.auto import tqdm
 
 import matplotlib.pyplot as plt
+import wandb
 
 # 设置随机种子
 random.seed(42)
@@ -76,10 +77,11 @@ BODY_HU_MIN = -500
 
 # 强化学习超参数
 GAMMA = 0.99  # 折扣因子
-ENTROPY_COEF = 0.01  # 熵正则化系数
+ENTROPY_COEF = 0.01  # 熵正则化系数 (降回0.01，0.05太激进)
 VALUE_COEF = 0.5  # 价值函数损失系数
-CLIP_EPSILON = 0.2  # PPO裁剪参数
+CLIP_EPSILON = 0.1  # PPO裁剪参数 (降低，原0.2太大)
 GAE_LAMBDA = 0.95  # GAE参数
+PPO_UPDATE_EPOCHS = 1  # PPO每批数据更新次数 (降为1，多次更新导致NaN)
 
 # 奖励权重
 TEACHER_CONSISTENCY_WEIGHT = 1.0  # 与教师模型一致的奖励
@@ -558,12 +560,27 @@ class PPOTrainer:
         # 前向传播
         policy_logits, values = self.policy_net(states)
 
+        # 数值稳定性：clamp logits
+        policy_logits = torch.clamp(policy_logits, -20, 20)
+
         # 策略损失
         probs = torch.sigmoid(policy_logits)
+        probs = torch.clamp(probs, 1e-7, 1 - 1e-7)  # 防止log(0)
+
+        # 检查NaN，如果有则跳过更新
+        if torch.isnan(probs).any() or torch.isnan(values).any():
+            return {
+                'total_loss': 0.0,
+                'policy_loss': 0.0,
+                'value_loss': 0.0,
+                'entropy': 0.0
+            }
+
         dist = Bernoulli(probs)
         new_log_probs = dist.log_prob(actions).sum(dim=[1, 2, 3])
 
-        ratio = torch.exp(new_log_probs - old_log_probs)
+        # clamp ratio防止爆炸
+        ratio = torch.exp(torch.clamp(new_log_probs - old_log_probs, -10, 10))
         surr1 = ratio * advantages
         surr2 = torch.clamp(ratio, 1 - CLIP_EPSILON, 1 + CLIP_EPSILON) * advantages
         policy_loss = -torch.min(surr1, surr2).mean()
@@ -576,6 +593,16 @@ class PPOTrainer:
 
         # 总损失
         loss = policy_loss + VALUE_COEF * value_loss - ENTROPY_COEF * entropy
+
+        # 检查loss是否为NaN
+        if torch.isnan(loss):
+            print("Warning: NaN loss detected, skipping update")
+            return {
+                'total_loss': 0.0,
+                'policy_loss': 0.0,
+                'value_loss': 0.0,
+                'entropy': 0.0
+            }
 
         self.optimizer.zero_grad()
         loss.backward()
@@ -626,13 +653,40 @@ def main():
     LABEL_MAP_PATH = '/local/hzhang02/data/dataset/outputs/label_map.json'
 
     TARGET_SHAPE = (256, 256)
-    BATCH_SIZE = 8
-    LEARNING_RATE = 3e-4
-    EPOCHS = 10
+    BATCH_SIZE = 16  # 适中的batch size
+    LEARNING_RATE = 5e-5  # 进一步降低学习率，防止梯度爆炸
+    EPOCHS = 30  # 减少训练轮数
     NUM_SUBJECTS = 50
     EPISODES_PER_EPOCH = 100
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    # ========== 初始化 wandb ==========
+    wandb.init(
+        project="muscle-rl-segmentation",
+        name=f"ppo-muscle-{time.strftime('%Y%m%d-%H%M%S')}",
+        config={
+            "learning_rate": LEARNING_RATE,
+            "batch_size": BATCH_SIZE,
+            "epochs": EPOCHS,
+            "num_subjects": NUM_SUBJECTS,
+            "episodes_per_epoch": EPISODES_PER_EPOCH,
+            "target_shape": TARGET_SHAPE,
+            "gamma": GAMMA,
+            "entropy_coef": ENTROPY_COEF,
+            "value_coef": VALUE_COEF,
+            "clip_epsilon": CLIP_EPSILON,
+            "gae_lambda": GAE_LAMBDA,
+            "ppo_update_epochs": PPO_UPDATE_EPOCHS,
+            "teacher_consistency_weight": TEACHER_CONSISTENCY_WEIGHT,
+            "hu_range_weight": HU_RANGE_WEIGHT,
+            "spatial_continuity_weight": SPATIAL_CONTINUITY_WEIGHT,
+            "morphology_weight": MORPHOLOGY_WEIGHT,
+            "muscle_hu_min": MUSCLE_HU_MIN,
+            "muscle_hu_max": MUSCLE_HU_MAX,
+        }
+    )
+    print("   wandb 初始化完成")
 
     # ========== 加载教师模型 ==========
     print("\n1. 加载教师模型...")
@@ -732,7 +786,18 @@ def main():
 
             # 前向传播获取策略
             policy_logits, values = policy_net(inputs)
+
+            # 数值稳定性：clamp logits防止溢出
+            policy_logits = torch.clamp(policy_logits, -20, 20)
             probs = torch.sigmoid(policy_logits)
+
+            # 数值稳定性：clamp概率防止NaN
+            probs = torch.clamp(probs, 1e-7, 1 - 1e-7)
+
+            # 检查NaN
+            if torch.isnan(probs).any():
+                print("Warning: NaN detected in probs, skipping batch")
+                continue
 
             # 采样动作
             dist = Bernoulli(probs)
@@ -765,11 +830,12 @@ def main():
             advantages = advantages.to(device)
             advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-            # PPO更新
-            loss_info = trainer.update(
-                inputs, actions, log_probs.detach(),
-                returns, advantages
-            )
+            # PPO多步更新 (对同一批数据更新多次)
+            for _ in range(PPO_UPDATE_EPOCHS):
+                loss_info = trainer.update(
+                    inputs, actions, log_probs.detach(),
+                    returns, advantages
+                )
 
             epoch_losses['policy'].append(loss_info['policy_loss'])
             epoch_losses['value'].append(loss_info['value_loss'])
@@ -832,6 +898,18 @@ def main():
         print(f"  验证HU合规率: {avg_hu_compliance:.4f}")
         print(f"  耗时: {epoch_time:.1f}秒")
 
+        # 记录到 wandb
+        wandb.log({
+            "epoch": epoch,
+            "train/avg_reward": avg_reward,
+            "train/policy_loss": avg_policy_loss,
+            "train/value_loss": avg_value_loss,
+            "train/entropy": avg_entropy,
+            "val/coverage": avg_coverage,
+            "val/hu_compliance": avg_hu_compliance,
+            "time/epoch_seconds": epoch_time,
+        })
+
         # 保存检查点
         torch.save({
             'epoch': epoch,
@@ -851,13 +929,19 @@ def main():
                 'val_hu_compliance': avg_hu_compliance,
             }, os.path.join(OUTPUT_DIR, 'best_rl_muscle_model.pth'))
             print(f"  新最佳模型！覆盖率: {best_val_coverage:.4f}")
+            # 保存最佳模型到 wandb
+            wandb.save(os.path.join(OUTPUT_DIR, 'best_rl_muscle_model.pth'))
 
     # ========== 保存结果 ==========
     print("\n5. 保存训练结果...")
 
-    # 保存历史
+    # 保存历史 (转换numpy类型为python原生类型)
+    history_serializable = {}
+    for key, values in history.items():
+        history_serializable[key] = [float(v) if hasattr(v, 'item') else v for v in values]
+
     with open(os.path.join(OUTPUT_DIR, 'training_history_rl.json'), 'w') as f:
-        json.dump(history, f, indent=2)
+        json.dump(history_serializable, f, indent=2)
 
     # 可视化训练曲线
     fig, axes = plt.subplots(2, 3, figsize=(15, 10))
@@ -901,6 +985,16 @@ def main():
     plt.tight_layout()
     plt.savefig(os.path.join(OUTPUT_DIR, 'training_history_rl.png'), dpi=150)
     plt.close()
+
+    # 上传训练曲线图到 wandb
+    wandb.log({"training_curves": wandb.Image(os.path.join(OUTPUT_DIR, 'training_history_rl.png'))})
+
+    # 记录最终摘要
+    wandb.summary["best_val_coverage"] = best_val_coverage
+    wandb.summary["total_epochs"] = EPOCHS
+
+    # 结束 wandb run
+    wandb.finish()
 
     print("\n" + "=" * 60)
     print("强化学习训练完成！")

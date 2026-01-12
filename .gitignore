@@ -8,8 +8,25 @@ __pycache__/
 .ipynb_checkpoints/
 */.ipynb_checkpoints/*
 
-# Model outputs and training artifacts
-outputs/*.pth
+# Model outputs and training artifacts - ignore checkpoints, keep best
+outputs/checkpoint_*.pth
+!outputs/best_model.pth
+
+# RL muscle training - ignore checkpoints, keep best model
+outputs_rl_muscle/checkpoint_*.pth
+!outputs_rl_muscle/best_rl_muscle_model.pth
+
+# Muscle transfer learning - ignore checkpoints, keep best model
+outputs_muscle_transfer/checkpoint_*.pth
+!outputs_muscle_transfer/best_transfer_model.pth
+
+# Muscle transfer learning V2
+outputs_muscle_transfer_v2/checkpoint_*.pth
+!outputs_muscle_transfer_v2/best_model.pth
+
+# Muscle transfer learning V3 (expand-then-refine)
+outputs_muscle_transfer_v3/checkpoint_*.pth
+!outputs_muscle_transfer_v3/best_model.pth
 
 # Backup - 只忽略中间检查点，保留最终模型
 outputs_backup/checkpoint_enhanced_epoch[1-9].pth

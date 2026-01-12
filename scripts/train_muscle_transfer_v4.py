@@ -87,6 +87,58 @@ ABDOMINAL_ORGANS = [
 ]
 EXCLUDE_MARKERS = ['femur_left.nii.gz', 'femur_right.nii.gz']
 
+# ========== 新增：所有非肌肉的segmentation文件 ==========
+# 这些区域会被排除，网络不应该在这些区域预测肌肉
+
+# 器官（内脏）
+ORGAN_FILES = [
+    'liver.nii.gz', 'spleen.nii.gz',
+    'kidney_left.nii.gz', 'kidney_right.nii.gz',
+    'kidney_cyst_left.nii.gz', 'kidney_cyst_right.nii.gz',
+    'pancreas.nii.gz', 'stomach.nii.gz', 'colon.nii.gz',
+    'small_bowel.nii.gz', 'duodenum.nii.gz',
+    'gallbladder.nii.gz', 'esophagus.nii.gz',
+    'urinary_bladder.nii.gz', 'prostate.nii.gz',
+    'adrenal_gland_left.nii.gz', 'adrenal_gland_right.nii.gz',
+    'heart.nii.gz', 'atrial_appendage_left.nii.gz',
+    'lung_lower_lobe_left.nii.gz', 'lung_lower_lobe_right.nii.gz',
+    'lung_middle_lobe_right.nii.gz',
+    'lung_upper_lobe_left.nii.gz', 'lung_upper_lobe_right.nii.gz',
+    'trachea.nii.gz', 'thyroid_gland.nii.gz',
+    'brain.nii.gz', 'spinal_cord.nii.gz',
+]
+
+# 骨骼
+BONE_FILES = [
+    'skull.nii.gz', 'sternum.nii.gz', 'sacrum.nii.gz',
+    'clavicula_left.nii.gz', 'clavicula_right.nii.gz',
+    'scapula_left.nii.gz', 'scapula_right.nii.gz',
+    'humerus_left.nii.gz', 'humerus_right.nii.gz',
+    'femur_left.nii.gz', 'femur_right.nii.gz',
+    'hip_left.nii.gz', 'hip_right.nii.gz',
+    'costal_cartilages.nii.gz',
+] + [f'rib_left_{i}.nii.gz' for i in range(1, 13)] \
+  + [f'rib_right_{i}.nii.gz' for i in range(1, 13)] \
+  + [f'vertebrae_C{i}.nii.gz' for i in range(1, 8)] \
+  + [f'vertebrae_T{i}.nii.gz' for i in range(1, 13)] \
+  + [f'vertebrae_L{i}.nii.gz' for i in range(1, 6)] \
+  + ['vertebrae_S1.nii.gz']
+
+# 血管
+VESSEL_FILES = [
+    'aorta.nii.gz', 'inferior_vena_cava.nii.gz', 'superior_vena_cava.nii.gz',
+    'portal_vein_and_splenic_vein.nii.gz', 'pulmonary_vein.nii.gz',
+    'brachiocephalic_trunk.nii.gz',
+    'brachiocephalic_vein_left.nii.gz', 'brachiocephalic_vein_right.nii.gz',
+    'common_carotid_artery_left.nii.gz', 'common_carotid_artery_right.nii.gz',
+    'subclavian_artery_left.nii.gz', 'subclavian_artery_right.nii.gz',
+    'iliac_artery_left.nii.gz', 'iliac_artery_right.nii.gz',
+    'iliac_vena_left.nii.gz', 'iliac_vena_right.nii.gz',
+]
+
+# 所有非肌肉的排除文件
+NON_MUSCLE_FILES = ORGAN_FILES + BONE_FILES + VESSEL_FILES
+
 # 训练超参数
 LEARNING_RATE = 1e-4
 WEIGHT_DECAY = 1e-5
@@ -395,16 +447,23 @@ class DoubleConv(nn.Module):
 
 class AttentionMuscleNet(nn.Module):
     """
-    带注意力机制的肌肉分割网络
+    带注意力机制的肌肉分割网络 - 增强版
 
     主要改进：
     1. 位置编码：让网络感知空间位置
     2. 自注意力：在bottleneck层捕获全局上下文
     3. 跨区域注意力：以已标注区域为参考
     4. 相似性注意力：学习肌肉特征原型并匹配
+
+    输入通道 (5通道):
+    - CT图像（归一化）
+    - HU粗分割
+    - 已知肌肉标签
+    - 非排除区域掩码
+    - 未标注区域掩码（新增）
     """
 
-    def __init__(self, in_ch=4, features=[32, 64, 128, 256], num_heads=8):
+    def __init__(self, in_ch=5, features=[32, 64, 128, 256], num_heads=8):
         super().__init__()
 
         self.features = features
@@ -516,11 +575,13 @@ class AttentionMuscleNet(nn.Module):
 
 class AttentionAwareLoss(nn.Module):
     """
-    注意力感知损失函数
+    注意力感知损失函数 - 增强版
 
     在v3的基础上增加：
     1. 相似性一致性损失：相似度高的区域应该和已标注肌肉有相似的标签
     2. 原型对比损失：增强已标注/未标注区域的特征区分
+    3. 非肌肉区域惩罚：在器官、骨骼、血管等区域严格禁止预测肌肉
+    4. 已标注区域排除：只在未标注区域寻找相似肌肉
     """
 
     def __init__(self):
@@ -528,19 +589,27 @@ class AttentionAwareLoss(nn.Module):
         self.bce = nn.BCEWithLogitsLoss(reduction='none')
 
     def forward(self, pred_logits, similarity_map, label_mask, hu_coarse,
-                exclusion_mask, body_mask):
+                exclusion_mask, body_mask, non_muscle_mask=None, all_labeled_mask=None):
         """
         Args:
             pred_logits: 模型主输出 (B, 1, H, W)
             similarity_map: 相似度图 (B, 1, H, W)
             label_mask: 已知肌肉标签 (B, 1, H, W)
             hu_coarse: HU粗分割 (B, 1, H, W)
-            exclusion_mask: 排除区域 (B, 1, H, W)
+            exclusion_mask: 排除区域 (B, 1, H, W) - 包含HU排除和非肌肉标注
             body_mask: 身体掩码 (B, 1, H, W)
+            non_muscle_mask: 非肌肉区域掩码 (B, 1, H, W) - 器官、骨骼、血管等
+            all_labeled_mask: 所有已标注区域掩码 (B, 1, H, W)
         """
         pred_prob = torch.sigmoid(pred_logits)
         similarity_prob = torch.sigmoid(similarity_map)
         losses = {}
+
+        # 如果没有提供，使用默认值
+        if non_muscle_mask is None:
+            non_muscle_mask = torch.zeros_like(label_mask)
+        if all_labeled_mask is None:
+            all_labeled_mask = label_mask
 
         # ============ 1. 已标注区域对齐损失 ============
         has_label = (label_mask > 0.5).float()
@@ -548,31 +617,40 @@ class AttentionAwareLoss(nn.Module):
         label_region_loss = (bce_all * has_label).sum() / (has_label.sum() + 1e-6)
         losses['label_alignment'] = label_region_loss * LABEL_ALIGNMENT_WEIGHT
 
-        # ============ 2. 覆盖奖励 ============
-        unlabeled_hu_valid = hu_coarse * (1 - has_label) * body_mask * (1 - exclusion_mask)
+        # ============ 2. 覆盖奖励（仅在未标注区域）============
+        # 关键改动：只在未标注区域寻找相似肌肉
+        unlabeled_region = (1 - all_labeled_mask) * body_mask * (1 - exclusion_mask)
+        unlabeled_hu_valid = hu_coarse * unlabeled_region
         coverage_loss = ((1 - pred_prob) * unlabeled_hu_valid).mean()
         losses['coverage_reward'] = coverage_loss * COVERAGE_REWARD_WEIGHT
 
-        # ============ 3. 排除区域损失 ============
+        # ============ 3. 排除区域损失（包含非肌肉标注）============
         if exclusion_mask.sum() > 0:
             exclusion_loss = (pred_prob * exclusion_mask).mean()
         else:
             exclusion_loss = torch.tensor(0.0, device=pred_logits.device)
         losses['exclusion'] = exclusion_loss * EXCLUSION_WEIGHT
 
-        # ============ 4. HU范围外惩罚 ============
+        # ============ 4. 非肌肉区域严格惩罚（新增）============
+        # 在器官、骨骼、血管等区域，即使HU值在肌肉范围内，也不应该预测为肌肉
+        if non_muscle_mask.sum() > 0:
+            non_muscle_penalty = (pred_prob * non_muscle_mask).sum() / (non_muscle_mask.sum() + 1e-6)
+            losses['non_muscle_penalty'] = non_muscle_penalty * (EXCLUSION_WEIGHT * 1.5)  # 更严格
+        else:
+            losses['non_muscle_penalty'] = torch.tensor(0.0, device=pred_logits.device)
+
+        # ============ 5. HU范围外惩罚 ============
         hu_invalid = (1 - hu_coarse) * body_mask * (1 - exclusion_mask)
         hu_violation = (pred_prob * hu_invalid).mean()
         losses['hu_violation'] = hu_violation * 1.0
 
-        # ============ 5. 边界平滑 ============
+        # ============ 6. 边界平滑 ============
         tv_h = torch.abs(pred_prob[:, :, 1:, :] - pred_prob[:, :, :-1, :]).mean()
         tv_w = torch.abs(pred_prob[:, :, :, 1:] - pred_prob[:, :, :, :-1]).mean()
         losses['smoothness'] = (tv_h + tv_w) * SMOOTHNESS_WEIGHT
 
-        # ============ 6. 相似性一致性损失（新增）============
-        # 相似度高的区域应该预测为肌肉
-        # 在未标注但HU合理的区域，相似度应该指导预测
+        # ============ 7. 相似性一致性损失（仅在未标注区域）============
+        # 相似度高的区域应该预测为肌肉，但仅在未标注区域
         similarity_guidance = similarity_prob * unlabeled_hu_valid
         pred_in_similar = pred_prob * unlabeled_hu_valid
 
@@ -580,11 +658,19 @@ class AttentionAwareLoss(nn.Module):
         similarity_consistency = F.mse_loss(pred_in_similar, similarity_guidance)
         losses['similarity_consistency'] = similarity_consistency * ATTENTION_SIMILARITY_WEIGHT
 
-        # ============ 7. 相似度图监督（在已标注区域）============
-        # 已标注区域的相似度应该高
+        # ============ 8. 相似度图监督（在已标注肌肉区域）============
+        # 已标注肌肉区域的相似度应该高
         similarity_in_label = self.bce(similarity_map, label_mask)
         similarity_label_loss = (similarity_in_label * (has_label + unlabeled_hu_valid * 0.3)).mean()
         losses['similarity_supervision'] = similarity_label_loss * 0.5
+
+        # ============ 9. 非肌肉区域相似度应该低（新增）============
+        # 非肌肉区域的相似度应该接近0
+        if non_muscle_mask.sum() > 0:
+            similarity_non_muscle = (similarity_prob * non_muscle_mask).sum() / (non_muscle_mask.sum() + 1e-6)
+            losses['similarity_non_muscle'] = similarity_non_muscle * 1.0
+        else:
+            losses['similarity_non_muscle'] = torch.tensor(0.0, device=pred_logits.device)
 
         total_loss = sum(losses.values())
         losses['total'] = total_loss
@@ -597,15 +683,21 @@ class AttentionAwareLoss(nn.Module):
 # ============================================================================
 
 class MuscleRefineDataset(Dataset):
-    """肌肉精修数据集"""
+    """肌肉精修数据集 - 增强版：支持所有segment数据导入和非肌肉区域排除"""
 
     def __init__(self, subjects, target_shape=(256, 256), abdominal_only=True):
         self.items = []
         self.target_shape = target_shape
         self.muscle_files = KNOWN_MUSCLE_FILES
+        self.non_muscle_files = NON_MUSCLE_FILES  # 新增：非肌肉文件列表
         self.abdominal_only = abdominal_only
 
+        # 预加载每个受试者的所有segmentation文件路径（用于后续加载）
+        self.subject_seg_cache = {}
+
         print(f"构建数据集... (腹部筛选: {abdominal_only})")
+        print(f"   已知肌肉文件: {len(self.muscle_files)} 个")
+        print(f"   非肌肉排除文件: {len(self.non_muscle_files)} 个")
         total_slices = 0
         kept_slices = 0
 
@@ -619,6 +711,10 @@ class MuscleRefineDataset(Dataset):
             has_muscle = any(os.path.exists(os.path.join(seg_dir, f)) for f in self.muscle_files)
             if not has_muscle:
                 continue
+
+            # 扫描该受试者所有可用的segmentation文件
+            available_segs = os.listdir(seg_dir) if os.path.exists(seg_dir) else []
+            self.subject_seg_cache[s] = available_segs
 
             img = nib.load(ct_path)
             depth = img.shape[2]
@@ -663,6 +759,7 @@ class MuscleRefineDataset(Dataset):
         return len(self.items)
 
     def _load_muscle_mask(self, subject_dir, z_idx, original_shape):
+        """加载已知肌肉区域掩码"""
         seg_dir = os.path.join(subject_dir, 'segmentations')
         combined_mask = np.zeros(original_shape, dtype=np.float32)
 
@@ -672,6 +769,48 @@ class MuscleRefineDataset(Dataset):
                 seg = nib.load(seg_path).get_fdata()
                 if z_idx < seg.shape[2]:
                     combined_mask = np.maximum(combined_mask, seg[:, :, z_idx])
+
+        return (combined_mask > 0.5).astype(np.float32)
+
+    def _load_non_muscle_mask(self, subject_dir, z_idx, original_shape):
+        """
+        加载所有非肌肉区域的掩码（器官、骨骼、血管等）
+        这些区域应该被排除，网络不应该在这些区域预测肌肉
+        """
+        seg_dir = os.path.join(subject_dir, 'segmentations')
+        combined_mask = np.zeros(original_shape, dtype=np.float32)
+
+        for seg_file in self.non_muscle_files:
+            seg_path = os.path.join(seg_dir, seg_file)
+            if os.path.exists(seg_path):
+                try:
+                    seg = nib.load(seg_path).get_fdata()
+                    if z_idx < seg.shape[2]:
+                        combined_mask = np.maximum(combined_mask, seg[:, :, z_idx])
+                except Exception:
+                    pass  # 跳过加载失败的文件
+
+        return (combined_mask > 0.5).astype(np.float32)
+
+    def _load_all_labeled_mask(self, subject_dir, z_idx, original_shape):
+        """
+        加载所有已标注区域的掩码（包括肌肉和非肌肉）
+        这个掩码用于在训练时排除已标注区域，只在未标注区域寻找相似肌肉
+        """
+        seg_dir = os.path.join(subject_dir, 'segmentations')
+        combined_mask = np.zeros(original_shape, dtype=np.float32)
+
+        # 获取该受试者可用的所有segmentation文件
+        available_segs = self.subject_seg_cache.get(subject_dir, [])
+
+        for seg_file in available_segs:
+            seg_path = os.path.join(seg_dir, seg_file)
+            try:
+                seg = nib.load(seg_path).get_fdata()
+                if z_idx < seg.shape[2]:
+                    combined_mask = np.maximum(combined_mask, seg[:, :, z_idx])
+            except Exception:
+                pass  # 跳过加载失败的文件
 
         return (combined_mask > 0.5).astype(np.float32)
 
@@ -698,6 +837,12 @@ class MuscleRefineDataset(Dataset):
         # 已知肌肉标签
         muscle_mask = self._load_muscle_mask(subject_dir, z, original_shape)
 
+        # 非肌肉区域掩码（器官、骨骼、血管等）- 新增
+        non_muscle_mask = self._load_non_muscle_mask(subject_dir, z, original_shape)
+
+        # 所有已标注区域掩码 - 新增
+        all_labeled_mask = self._load_all_labeled_mask(subject_dir, z, original_shape)
+
         # 归一化CT
         lo, hi = np.percentile(hu_slice, 1), np.percentile(hu_slice, 99)
         if hi - lo > 0:
@@ -711,22 +856,27 @@ class MuscleRefineDataset(Dataset):
         ct_resized = resize(ct_normalized, (H, W), order=1, preserve_range=True)
         hu_resized = resize(hu_slice, (H, W), order=1, preserve_range=True)
         muscle_resized = resize(muscle_mask, (H, W), order=0, preserve_range=True)
+        non_muscle_resized = resize(non_muscle_mask, (H, W), order=0, preserve_range=True)
+        all_labeled_resized = resize(all_labeled_mask, (H, W), order=0, preserve_range=True)
 
         # HU粗分割
         hu_coarse = ((hu_resized >= MUSCLE_HU_MIN) & (hu_resized <= MUSCLE_HU_MAX)).astype(np.float32)
 
-        # 排除区域
-        exclusion = ((hu_resized < AIR_HU_MAX) | (hu_resized > BONE_HU_MIN)).astype(np.float32)
+        # 排除区域（原始的HU排除 + 非肌肉区域）
+        hu_exclusion = ((hu_resized < AIR_HU_MAX) | (hu_resized > BONE_HU_MIN)).astype(np.float32)
+        # 合并：HU排除区域 + 非肌肉标注区域
+        exclusion = np.maximum(hu_exclusion, non_muscle_resized)
 
         # 身体掩码
         body_mask = self._get_body_mask(hu_resized)
 
-        # 构建输入
+        # 构建输入 - 增加非肌肉掩码通道
         input_tensor = np.stack([
             ct_resized,
             hu_coarse,
             muscle_resized,
-            1 - exclusion
+            1 - exclusion,  # 非排除区域
+            1 - all_labeled_resized,  # 新增：未标注区域掩码（用于引导网络只在未标注区域寻找相似肌肉）
         ], axis=0)
 
         input_t = torch.from_numpy(input_tensor).float()
@@ -734,15 +884,17 @@ class MuscleRefineDataset(Dataset):
         muscle_t = torch.from_numpy(muscle_resized).unsqueeze(0).float()
         body_t = torch.from_numpy(body_mask).unsqueeze(0).float()
         exclusion_t = torch.from_numpy(exclusion).unsqueeze(0).float()
+        non_muscle_t = torch.from_numpy(non_muscle_resized).unsqueeze(0).float()
+        all_labeled_t = torch.from_numpy(all_labeled_resized).unsqueeze(0).float()
 
-        return input_t, hu_coarse_t, muscle_t, body_t, exclusion_t
+        return input_t, hu_coarse_t, muscle_t, body_t, exclusion_t, non_muscle_t, all_labeled_t
 
 
 # ============================================================================
 # 6. 评估指标
 # ============================================================================
 
-def compute_metrics(pred, label, hu_coarse, body_mask, exclusion_mask):
+def compute_metrics(pred, label, hu_coarse, body_mask, exclusion_mask, non_muscle_mask=None):
     pred_binary = (pred > 0.5).float()
     label_binary = (label > 0.5).float()
 
@@ -787,6 +939,13 @@ def compute_metrics(pred, label, hu_coarse, body_mask, exclusion_mask):
     else:
         metrics['expansion_ratio'] = 1.0
 
+    # 6. 非肌肉区域溢出（新增）
+    if non_muscle_mask is not None and non_muscle_mask.sum() > 0:
+        non_muscle_overflow = (pred_binary * non_muscle_mask).sum() / non_muscle_mask.sum()
+        metrics['non_muscle_overflow'] = non_muscle_overflow.item()
+    else:
+        metrics['non_muscle_overflow'] = 0.0
+
     return metrics
 
 
@@ -799,7 +958,7 @@ def visualize_predictions(model, dataloader, device, epoch, output_dir, num_samp
 
     samples = []
     with torch.no_grad():
-        for inputs, hu_coarse, labels, body_masks, exclusion_masks in dataloader:
+        for inputs, hu_coarse, labels, body_masks, exclusion_masks, non_muscle_masks, all_labeled_masks in dataloader:
             if len(samples) >= num_samples:
                 break
 
@@ -817,11 +976,13 @@ def visualize_predictions(model, dataloader, device, epoch, output_dir, num_samp
                     'pred': pred_prob[i, 0].cpu().numpy(),
                     'similarity': similarity_prob[i, 0].cpu().numpy(),
                     'exclusion': exclusion_masks[i, 0].numpy(),
+                    'non_muscle': non_muscle_masks[i, 0].numpy(),
+                    'all_labeled': all_labeled_masks[i, 0].numpy(),
                 })
                 if len(samples) >= num_samples:
                     break
 
-    fig, axes = plt.subplots(num_samples, 7, figsize=(28, 4 * num_samples))
+    fig, axes = plt.subplots(num_samples, 8, figsize=(32, 4 * num_samples))  # 增加一列显示排除区域
     if num_samples == 1:
         axes = axes.reshape(1, -1)
 
@@ -831,6 +992,8 @@ def visualize_predictions(model, dataloader, device, epoch, output_dir, num_samp
         label = sample['label']
         pred = sample['pred']
         similarity = sample['similarity']
+        non_muscle = sample['non_muscle']
+        all_labeled = sample['all_labeled']
         pred_binary = (pred > 0.5).astype(np.float32)
 
         # 1. CT原图
@@ -844,13 +1007,16 @@ def visualize_predictions(model, dataloader, device, epoch, output_dir, num_samp
         axes[idx, 1].set_title('HU Coarse')
         axes[idx, 1].axis('off')
 
-        # 3. 已知标签
+        # 3. 已知标签 + 非肌肉区域
+        overlay_labels = np.zeros((*ct.shape, 3))
+        overlay_labels[..., 0] = label  # 红色：已知肌肉
+        overlay_labels[..., 2] = non_muscle  # 蓝色：非肌肉区域
         axes[idx, 2].imshow(ct, cmap='gray')
-        axes[idx, 2].imshow(label, cmap='Reds', alpha=0.5)
-        axes[idx, 2].set_title('Known Labels')
+        axes[idx, 2].imshow(overlay_labels, alpha=0.5)
+        axes[idx, 2].set_title('R:Muscle B:NonMuscle')
         axes[idx, 2].axis('off')
 
-        # 4. 相似度图（新增）
+        # 4. 相似度图
         axes[idx, 3].imshow(ct, cmap='gray')
         axes[idx, 3].imshow(similarity, cmap='hot', alpha=0.6)
         axes[idx, 3].set_title('Similarity Map')
@@ -862,25 +1028,33 @@ def visualize_predictions(model, dataloader, device, epoch, output_dir, num_samp
         axes[idx, 4].set_title('Prediction')
         axes[idx, 4].axis('off')
 
-        # 6. 对比
+        # 6. 对比（预测vs已知标签）
         overlay = np.zeros((*ct.shape, 3))
-        overlay[..., 0] = label * (1 - pred_binary)
-        overlay[..., 1] = pred_binary * (1 - label)
-        overlay[..., 2] = pred_binary * label
+        overlay[..., 0] = label * (1 - pred_binary)  # 红色：漏掉的
+        overlay[..., 1] = pred_binary * (1 - label)  # 绿色：新发现的
+        overlay[..., 2] = pred_binary * label  # 蓝色：匹配的
         axes[idx, 5].imshow(ct, cmap='gray')
         axes[idx, 5].imshow(overlay, alpha=0.6)
         axes[idx, 5].set_title('R:Miss G:New B:Match')
         axes[idx, 5].axis('off')
 
-        # 7. 预测 vs HU
+        # 7. 预测 vs 非肌肉区域（检查溢出）
         overlay2 = np.zeros((*ct.shape, 3))
-        overlay2[..., 0] = hu_coarse * (1 - pred_binary)
-        overlay2[..., 1] = pred_binary * hu_coarse
-        overlay2[..., 2] = pred_binary * (1 - hu_coarse)
+        overlay2[..., 0] = pred_binary * non_muscle  # 红色：预测溢出到非肌肉区域（不好）
+        overlay2[..., 1] = pred_binary * (1 - non_muscle) * (1 - label)  # 绿色：在未标注非排除区域的预测（好）
+        overlay2[..., 2] = pred_binary * label  # 蓝色：在已知肌肉区域的预测
         axes[idx, 6].imshow(ct, cmap='gray')
         axes[idx, 6].imshow(overlay2, alpha=0.6)
-        axes[idx, 6].set_title('R:Missed G:Good B:Bad')
+        axes[idx, 6].set_title('R:Overflow G:Good B:Known')
         axes[idx, 6].axis('off')
+
+        # 8. 未标注区域的预测
+        unlabeled = 1 - all_labeled
+        unlabeled_pred = pred_binary * unlabeled
+        axes[idx, 7].imshow(ct, cmap='gray')
+        axes[idx, 7].imshow(unlabeled_pred, cmap='Oranges', alpha=0.6)
+        axes[idx, 7].set_title('New Muscle Found')
+        axes[idx, 7].axis('off')
 
     plt.suptitle(f'Epoch {epoch} - Attention-based Muscle Transfer V4', fontsize=14, fontweight='bold')
     plt.tight_layout()
@@ -898,7 +1072,12 @@ def visualize_predictions(model, dataloader, device, epoch, output_dir, num_samp
 
 def main():
     print("=" * 60)
-    print("肌肉特征迁移学习 V4 - 注意力机制版本")
+    print("肌肉特征迁移学习 V4 - 增强版（全segment排除）")
+    print("=" * 60)
+    print("新特性：")
+    print("  - 导入所有segment数据")
+    print("  - 排除非肌肉区域（器官、骨骼、血管等）")
+    print("  - 只在未标注区域寻找相似肌肉")
     print("=" * 60)
 
     DATA_ROOT = '/local/hzhang02/data'
@@ -911,9 +1090,10 @@ def main():
     # wandb
     wandb.init(
         project="muscle-transfer-learning",
-        name=f"transfer-v4-attention-{time.strftime('%Y%m%d-%H%M%S')}",
+        name=f"transfer-v4-enhanced-{time.strftime('%Y%m%d-%H%M%S')}",
         config={
-            "version": "v4-attention",
+            "version": "v4-enhanced-with-all-segments",
+            "description": "排除所有非肌肉区域（器官、骨骼、血管），只在未标注区域寻找相似肌肉",
             "learning_rate": LEARNING_RATE,
             "batch_size": BATCH_SIZE,
             "epochs": EPOCHS,
@@ -924,13 +1104,16 @@ def main():
             "attention_similarity_weight": ATTENTION_SIMILARITY_WEIGHT,
             "muscle_hu_range": [MUSCLE_HU_MIN, MUSCLE_HU_MAX],
             "abdominal_only": ABDOMINAL_ONLY,
+            "num_muscle_files": len(KNOWN_MUSCLE_FILES),
+            "num_non_muscle_files": len(NON_MUSCLE_FILES),
+            "input_channels": 5,  # CT, HU, muscle, non-exclusion, unlabeled
         }
     )
     print("   wandb 初始化完成")
 
     # 模型
     print("\n1. 初始化模型...")
-    model = AttentionMuscleNet(in_ch=4, features=[32, 64, 128, 256], num_heads=8)
+    model = AttentionMuscleNet(in_ch=5, features=[32, 64, 128, 256], num_heads=8)  # 5通道输入
     model.to(device)
     print(f"   模型参数量: {sum(p.numel() for p in model.parameters()):,}")
 
@@ -971,7 +1154,7 @@ def main():
     history = {
         'epoch': [], 'train_loss': [], 'val_loss': [],
         'label_recall': [], 'label_dice': [], 'hu_coverage': [],
-        'exclusion_overflow': [], 'expansion_ratio': []
+        'exclusion_overflow': [], 'expansion_ratio': [], 'non_muscle_overflow': []
     }
 
     best_recall = 0
@@ -987,20 +1170,23 @@ def main():
         loss_components = {
             'label_alignment': [], 'coverage_reward': [], 'exclusion': [],
             'hu_violation': [], 'smoothness': [], 'similarity_consistency': [],
-            'similarity_supervision': []
+            'similarity_supervision': [], 'non_muscle_penalty': [], 'similarity_non_muscle': []
         }
 
-        for inputs, hu_coarse, labels, body_masks, exclusion_masks in tqdm(train_loader, desc="Training"):
+        for inputs, hu_coarse, labels, body_masks, exclusion_masks, non_muscle_masks, all_labeled_masks in tqdm(train_loader, desc="Training"):
             inputs = inputs.to(device)
             hu_coarse = hu_coarse.to(device)
             labels = labels.to(device)
             body_masks = body_masks.to(device)
             exclusion_masks = exclusion_masks.to(device)
+            non_muscle_masks = non_muscle_masks.to(device)
+            all_labeled_masks = all_labeled_masks.to(device)
 
             optimizer.zero_grad()
             pred_logits, similarity_map, _ = model(inputs, labels)
             loss, loss_dict = criterion(pred_logits, similarity_map, labels,
-                                        hu_coarse, exclusion_masks, body_masks)
+                                        hu_coarse, exclusion_masks, body_masks,
+                                        non_muscle_masks, all_labeled_masks)
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -1015,26 +1201,29 @@ def main():
         model.eval()
         val_losses = []
         val_metrics = {'label_recall': [], 'label_dice': [], 'hu_coverage': [],
-                       'exclusion_overflow': [], 'expansion_ratio': []}
+                       'exclusion_overflow': [], 'expansion_ratio': [], 'non_muscle_overflow': []}
 
         with torch.no_grad():
-            for inputs, hu_coarse, labels, body_masks, exclusion_masks in tqdm(val_loader, desc="Validation"):
+            for inputs, hu_coarse, labels, body_masks, exclusion_masks, non_muscle_masks, all_labeled_masks in tqdm(val_loader, desc="Validation"):
                 inputs = inputs.to(device)
                 hu_coarse = hu_coarse.to(device)
                 labels = labels.to(device)
                 body_masks = body_masks.to(device)
                 exclusion_masks = exclusion_masks.to(device)
+                non_muscle_masks = non_muscle_masks.to(device)
+                all_labeled_masks = all_labeled_masks.to(device)
 
                 pred_logits, similarity_map, _ = model(inputs, labels)
                 loss, _ = criterion(pred_logits, similarity_map, labels,
-                                    hu_coarse, exclusion_masks, body_masks)
+                                    hu_coarse, exclusion_masks, body_masks,
+                                    non_muscle_masks, all_labeled_masks)
                 val_losses.append(loss.item())
 
                 pred_prob = torch.sigmoid(pred_logits)
                 for i in range(inputs.size(0)):
                     metrics = compute_metrics(
                         pred_prob[i], labels[i], hu_coarse[i],
-                        body_masks[i], exclusion_masks[i]
+                        body_masks[i], exclusion_masks[i], non_muscle_masks[i]
                     )
                     for k, v in metrics.items():
                         val_metrics[k].append(v)
@@ -1061,6 +1250,7 @@ def main():
         print(f"  标签Dice: {avg_metrics['label_dice']:.4f}")
         print(f"  HU覆盖率: {avg_metrics['hu_coverage']:.4f}")
         print(f"  排除溢出: {avg_metrics['exclusion_overflow']:.4f}")
+        print(f"  非肌肉溢出: {avg_metrics['non_muscle_overflow']:.4f}")  # 新增
         print(f"  扩展比例: {avg_metrics['expansion_ratio']:.2f}x")
         print(f"  耗时: {epoch_time:.1f}秒")
 
@@ -1071,12 +1261,14 @@ def main():
             "train/label_alignment": np.mean(loss_components['label_alignment']),
             "train/coverage_reward": np.mean(loss_components['coverage_reward']),
             "train/exclusion": np.mean(loss_components['exclusion']),
+            "train/non_muscle_penalty": np.mean(loss_components['non_muscle_penalty']),  # 新增
             "train/similarity_consistency": np.mean(loss_components['similarity_consistency']),
             "val/loss": avg_val_loss,
             "val/label_recall": avg_metrics['label_recall'],
             "val/label_dice": avg_metrics['label_dice'],
             "val/hu_coverage": avg_metrics['hu_coverage'],
             "val/exclusion_overflow": avg_metrics['exclusion_overflow'],
+            "val/non_muscle_overflow": avg_metrics['non_muscle_overflow'],  # 新增
             "val/expansion_ratio": avg_metrics['expansion_ratio'],
             "lr": scheduler.get_last_lr()[0],
         }
